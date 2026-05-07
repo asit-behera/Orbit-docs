@@ -11,11 +11,10 @@ Detailed specs for each of the 8 products. See ARCHITECTURE.md for technical det
 ### Key Features
 
 1. **Multi-Source Ingestion**
-   - Yahoo Finance (stocks, historical)
-   - OANDA (forex, real-time)
-   - Alpaca (stocks, real-time)
-   - Binance/Kraken (crypto)
-   - Any CSV upload
+   - TrueData Velocity Ultima (NSE EQ, NSE F&O, MCX — live ticks + historical)
+   - NSE Bhavcopy (daily EOD reference, symbol master)
+   - MCX Symbol Master (daily instrument refresh)
+   - CSV upload (manual historical data if needed)
 
 2. **Data Validation**
    - Gap detection (missing bars)
@@ -30,7 +29,7 @@ Detailed specs for each of the 8 products. See ARCHITECTURE.md for technical det
    - Redis cache: hot symbols (1-day TTL)
 
 4. **Data Quality Dashboard**
-   - Source status (Yahoo, OANDA, etc.)
+   - Source status (TrueData WebSocket, NSE Bhavcopy, MCX master)
    - Last refresh time
    - Record counts by symbol
    - Gaps detected
@@ -50,20 +49,17 @@ Detailed specs for each of the 8 products. See ARCHITECTURE.md for technical det
 
 ```yaml
 sources:
-  yahoo_finance:
-    symbols: [AAPL, MSFT, GOOGL, ...]
-    refresh: daily 6 PM
-    lookback: 20 years
+  truedata:
+    segments: [NSE_EQ, NSE_FNO, MCX]
+    mode: websocket_live          # persistent WebSocket
+    historical_backfill: true     # Day 1 bulk pull via REST API
+    symbols_per_segment: 700      # Ultima plan with add-on
+
+  nse_bhavcopy:
+    refresh: daily 08:30 IST      # Pre-market symbol master refresh
     
-  oanda:
-    pairs: [EURUSD, GBPUSD, USDJPY, ...]
-    refresh: real-time
-    lookback: 5 years
-    
-  alpaca:
-    symbols: [AAPL, MSFT, ...]
-    refresh: hourly
-    lookback: 10 years
+  mcx_symbol_master:
+    refresh: daily 08:30 IST
 ```
 
 ---
@@ -217,7 +213,7 @@ order_execution:
   market_fill_price: "close"  # or "open", "hl2"
   limit_order_timeout: "infinite"  # or N bars
   
-leverage: 1.0  # 1x for equities, up to 10x for forex
+leverage: 1.0  # 1x for equity delivery; F&O/MCX use SPAN margin (set per instrument)
 initial_capital: 100000
 ```
 
@@ -237,7 +233,7 @@ initial_capital: 100000
   "trades": [
     {
       "date": "2015-01-15",
-      "symbol": "AAPL",
+      "symbol": "NIFTY-I",
       "action": "BUY",
       "qty": 100,
       "entry_price": 127.50,
@@ -359,7 +355,7 @@ FAIL criteria:
    - Current equity, cash, margin
    - Open positions, unrealized P&L
    - Correlation matrix (strategy pairs)
-   - Margin ratio (for forex/leverage)
+   - Margin ratio (SPAN + Exposure for F&O/MCX)
 
 3. **Alerts & Limits**
    - Drawdown > 10%: Reduce positions 50%
@@ -370,27 +366,30 @@ FAIL criteria:
 
 4. **Risk Rules**
    ```
-   Max position per trade: 2% of capital
-   Max portfolio exposure: 100% (no leverage)
-   Max leverage (forex): 10x
+   Max risk per trade: 2% of capital
+   Max portfolio exposure: 100% (no naked leverage)
+   F&O/MCX margin: SPAN + Exposure margin enforced
    Max drawdown alert: 10%
    Max drawdown halt: 15%
-   Daily loss limit: $500
+   Daily loss limit: ₹5,000 (configurable)
    Max margin utilization: 80%
+   MCX position close: 3 days before expiry (physical delivery risk)
+   Intraday MIS auto-squareoff: 15:15 IST
    ```
 
 ### Signals
 
 Receives:
-- Strategy signal: "BUY 100 AAPL"
+- Strategy signal: "BUY 1 LOT NIFTY-I"
 - Current positions: {...}
-- Account equity: $100k
-- Market prices: {AAPL: 152.50, ...}
+- Account equity: ₹5,00,000
+- Market prices: {NIFTY-I: 24350, GOLD-I: 72400, ...}
+- SPAN margin requirements: from instruments_india table
 
 Outputs:
-- Approved size: "Buy 75 shares (1.5% position)"
-- Or: "Rejected (margin too high)"
-- Position sizing calculation: "Volatility 15%, size 1.2%"
+- Approved size: "Buy 1 lot (25 units, margin ₹1,10,000)"
+- Or: "Rejected — margin utilization would exceed 80%"
+- Position sizing calculation: "2% risk = ₹10,000; ATR stop = ₹150; lots = 2"
 
 ---
 
@@ -487,10 +486,10 @@ Go live only if:
    - Reject orders violating risk limits
 
 2. **Broker Integration**
-   - Alpaca (stocks)
-   - OANDA (forex)
-   - Interactive Brokers (everything)
-   - Support for multiple brokers
+   - Zerodha Kite API (all segments: NSE EQ, NSE F&O, MCX)
+   - Order types: CNC (equity delivery), MIS (intraday), NRML (F&O/MCX overnight)
+   - GTT (Good Till Triggered) orders for stop losses
+   - See ZERODHA_SPEC.md for full integration details
 
 3. **Execution Quality**
    - Track latency (signal → fill)
@@ -513,16 +512,12 @@ Go live only if:
 ### Broker Configuration
 
 ```yaml
-alpaca:
-  api_key: ${ALPACA_API_KEY}
-  base_url: "https://api.alpaca.markets"
-  asset_types: [stocks]
-
-oanda:
-  api_key: ${OANDA_API_KEY}
-  account_id: ${OANDA_ACCOUNT_ID}
-  asset_types: [forex]
-  max_leverage: 10
+zerodha:
+  api_key: ${ZERODHA_API_KEY}
+  api_secret: ${ZERODHA_API_SECRET}
+  access_token: ${ZERODHA_ACCESS_TOKEN}   # Refreshed daily via login flow
+  segments: [NSE, NFO, MCX]
+  paper_mode: false
 ```
 
 ### Safety Limits (Enforced)
@@ -561,15 +556,15 @@ Risk checks:
 ## Interaction Matrix
 
 ```
-                     Read From      Write To
-Data Manager       └─ OANDA, Yahoo → DB, Redis
-Strategy Builder   ├─ DB          → DB
-Backtest Engine    ├─ DB, S3      → DB (trades, metrics)
-Validation Suite   ├─ DB          → DB (validation results)
-Risk Monitor       ├─ Redis, DB   → Redis (positions)
-Analytics API      ├─ DB, Redis   → Grafana
-Paper Trader       ├─ Alpaca API  → DB (paper trades)
-Live Executor      ├─ DB, Redis   → Broker API, DB (audit)
+                     Read From           Write To
+Data Manager       └─ TrueData WS      → TimescaleDB, Redis
+Strategy Builder   ├─ DB               → DB
+Backtest Engine    ├─ DB, Parquet      → DB (trades, metrics)
+Validation Suite   ├─ DB               → DB (validation results)
+Risk Monitor       ├─ Redis, DB        → Redis (positions)
+Analytics API      ├─ DB, Redis        → Grafana
+Paper Trader       ├─ TrueData live    → DB (paper trades)
+Live Executor      ├─ DB, Redis        → Zerodha Kite API, DB (audit)
 ```
 
 ---

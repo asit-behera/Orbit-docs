@@ -25,7 +25,7 @@ Key differences that affect our system:
 
 **What it is:** The cash equity market on the National Stock Exchange. Stocks are bought and delivered (T+1 settlement). No leverage on delivery trades; intraday leverage is broker-dependent.
 
-**What we trade:** Primarily index ETFs and large-cap stocks for mean reversion and momentum strategies. The equity segment is also used as a reference universe for identifying which stocks have active F&O contracts.
+**What we trade:** Primarily large-cap NSE stocks and index ETFs for mean reversion and momentum strategies. The equity segment is also used as a reference universe for identifying which stocks have active F&O contracts.
 
 **Key facts:**
 - Over 2,000 actively traded symbols
@@ -48,6 +48,9 @@ Key differences that affect our system:
 ### 2.2 NSE F&O (Futures & Options)
 
 **What it is:** Derivatives market on NSE. We trade futures only (not options — theta decay is a structural disadvantage we choose to avoid).
+
+> **Options deferred to Phase 2.**  
+> Options require a fundamentally different system — theta decay management, IV surface modeling, Greeks-aware position sizing, and options chain data beyond OHLCV. See [OPTIONS.md](./OPTIONS.md) for the full future design.
 
 **Instruments we focus on:**
 

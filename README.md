@@ -1,6 +1,6 @@
 # Personal Automated Trading Suite
 
-A professional-grade, self-hosted algorithmic trading system designed for personal traders. Supports equities, forex, and crypto with visual strategy building, rigorous backtesting, and live execution.
+A professional-grade, self-hosted algorithmic trading system for Indian markets. Covers NSE Equity, NSE Futures (F&O), and MCX Commodity Futures — with visual strategy building, rigorous backtesting, paper trading, and live execution via Zerodha.
 
 ## 📋 Table of Contents
 
@@ -70,15 +70,20 @@ See [PRODUCTS.md](./docs/PRODUCTS.md) for detailed product specs.
 
 ```
 docs/
-├─ ARCHITECTURE.md          # Technical design, databases, APIs
-├─ PRODUCTS.md              # Detailed specs for each product
-├─ LEARNING_ROADMAP.md      # What you need to learn about markets
-├─ STRATEGY_GUIDE.md        # How to build profitable strategies
-├─ DEPLOYMENT.md            # GCP setup, Docker, configuration
-├─ ROADMAP.md               # 6-month implementation timeline
-├─ DATA_SPEC.md             # Asset types, data requirements
-├─ RISK_MANAGEMENT.md       # Position sizing, drawdown limits
-└─ MONITORING.md            # Grafana dashboards, alerts
+├─ ARCHITECTURE.md              # Technical design, databases, APIs
+├─ PRODUCTS.md                  # Detailed specs for each product
+├─ LEARNING_ROADMAP.md          # What you need to learn about markets
+├─ STRATEGY_GUIDE.md            # How to build profitable strategies
+├─ DEPLOYMENT.md                # GCP setup, Docker, configuration
+├─ ROADMAP.md                   # 6-month implementation timeline
+├─ INDIA_MARKETS_SPEC.md        # NSE EQ, NSE F&O, MCX structure & rules
+├─ TRUEDATA_SPEC.md             # TrueData Velocity integration
+├─ INGESTION_PIPELINE_SPEC.md   # Live tick ingestion service design
+├─ DATA_SCHEMA_INDIA.md         # TimescaleDB schema for India data
+├─ CONTINUOUS_CONTRACTS_SPEC.md # Futures roll & back-adjustment
+├─ ALLOCATOR_SPEC.md            # Capital allocation logic
+├─ OPTIONS.md                   # Options system design (Phase 2, deferred)
+└─ MONITORING.md                # Grafana dashboards, alerts
 ```
 
 ## Key Principles
@@ -87,14 +92,18 @@ docs/
 2. **More rigorous than you expect.** Validation before live trading.
 3. **Your data, your rules.** Self-hosted, fully customizable.
 4. **Scalable from day 1.** Start with 1 strategy, grow to 100.
-5. **Asset-agnostic.** Same system handles stocks, forex, crypto.
+5. **India-first.** Built for NSE and MCX market structure — lot sizes, expiry cycles, SPAN margin.
 
 ## Asset Support
 
-- **Equities:** Yahoo Finance, Alpaca API
-- **Forex:** OANDA, Interactive Brokers
-- **Crypto:** Binance, Kraken
-- **All:** Same strategy engine, different data sources
+| Segment | Exchange | Data Source | Executor |
+|---------|----------|-------------|----------|
+| Equity (Cash) | NSE EQ | TrueData Velocity Ultima | Zerodha Kite API |
+| Futures | NSE F&O | TrueData Velocity Ultima | Zerodha Kite API |
+| Commodity Futures | MCX | TrueData Velocity Ultima | Zerodha Kite API |
+
+**Out of scope (Phase 1):** Options, Forex, Crypto.  
+**Options:** Deferred to Phase 2 — see [OPTIONS.md](./OPTIONS.md) for future design.
 
 ## Next Steps
 
@@ -106,6 +115,8 @@ docs/
 
 ---
 
-**Last Updated:** May 2025  
+**Last Updated:** May 2026  
 **Status:** Design Phase (ready to implement)  
-**Author's Goal:** Personal automated trader, scalable to 100+ strategies
+**Markets:** NSE Equity · NSE Futures · MCX Commodity  
+**Data:** TrueData Velocity Ultima  
+**Execution:** Zerodha Kite API

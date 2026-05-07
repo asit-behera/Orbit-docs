@@ -49,7 +49,7 @@ Complete technical design of the trading suite. See README.md for product overvi
 | Layer | Component | Technology | Why |
 |-------|-----------|-----------|-----|
 | **Compute** | Services | Cloud Run | Serverless, pay per invocation |
-| **Database** | Primary | PostgreSQL | ACID, time-series friendly |
+| **Database** | Primary | PostgreSQL + TimescaleDB | ACID + time-series partitioning for tick data |
 | **Database** | Archive | Parquet | Compression, columnar queries |
 | **Cache** | Session | Redis | In-memory, fast writes |
 | **Storage** | Secrets | Google Secret Manager | Native, secure |
@@ -59,6 +59,8 @@ Complete technical design of the trading suite. See README.md for product overvi
 | **Language** | Fast path | Go | Sub-millisecond latency (risk monitor, executor) |
 | **Language** | Data | Python | NumPy, Pandas (backtest, validation) |
 | **Language** | API | FastAPI | Async, type-safe, fast |
+| **Data Feed** | Live + Historical | TrueData Velocity Ultima | NSE EQ, NSE F&O, MCX |
+| **Broker** | Execution | Zerodha Kite API | Orders, positions, margin |
 
 ---
 
@@ -67,11 +69,12 @@ Complete technical design of the trading suite. See README.md for product overvi
 ### Core Tables
 
 ```sql
--- Timeseries data (OHLCV)
+-- Timeseries data (OHLCV) — legacy table retained for reference
+-- India market data is stored in ohlcv_daily, ohlcv_1min (see DATA_SCHEMA_INDIA.md)
 CREATE TABLE ohlcv (
     id BIGSERIAL PRIMARY KEY,
-    asset_class VARCHAR(20),      -- 'stock', 'forex', 'crypto'
-    symbol VARCHAR(20),            -- AAPL, EURUSD, BTC
+    asset_class VARCHAR(20),      -- 'equity', 'futures', 'commodity'
+    symbol VARCHAR(20),            -- RELIANCE, NIFTY-I, GOLD-I
     date TIMESTAMP,
     open DECIMAL(12,6),
     high DECIMAL(12,6),
@@ -79,7 +82,7 @@ CREATE TABLE ohlcv (
     close DECIMAL(12,6),
     volume BIGINT,
     adjusted_close DECIMAL(12,6),
-    source VARCHAR(50),            -- 'yahoo', 'oanda', 'binance'
+    source VARCHAR(50),            -- 'truedata_api', 'truedata_live'
     created_at TIMESTAMP,
     updated_at TIMESTAMP,
     UNIQUE(asset_class, symbol, date, source),
@@ -93,7 +96,7 @@ CREATE TABLE instruments (
     symbol VARCHAR(20) PRIMARY KEY,
     name VARCHAR(200),
     asset_class VARCHAR(20),
-    exchange VARCHAR(20),
+    exchange VARCHAR(20),          -- NSE, MCX
     active_from DATE,
     active_to DATE,
     delisted BOOLEAN DEFAULT FALSE,

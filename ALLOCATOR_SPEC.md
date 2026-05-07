@@ -5,7 +5,7 @@
 **Status:** Design Phase — Ready to Implement
 **Scope:** Architecture + Math + API + DB Schema + Integration
 **Approach:** Rule-based, no ML, daily EOD rebalancing
-**Asset Class:** Equities (forex added later when stable)
+**Asset Class:** Equities, Futures (NSE F&O), Commodity (MCX)
 **Changelog from V1:** All 25 identified gaps resolved (see Section 15)
 
 -----
@@ -27,7 +27,7 @@ It does NOT:
 
 It DOES:
 
-- Classify the current market regime (rule-based, SPY reference)
+- Classify the current market regime (rule-based, NIFTY-I reference)
 - Score each strategy’s fitness for that regime
 - Adjust weights based on recent performance and drawdown
 - Enforce correlation constraints across strategies
@@ -216,12 +216,12 @@ This avoids cliff-edge rebalancing when a single threshold flips.
 
 ### 6.2 Reference Symbol
 
-Equities only (current phase): SPY
+India markets (current phase): NIFTY-I (continuous near-month)
 
 ```
-allocator_config.reference_symbol = 'SPY'  (configurable)
-asset_class: 'equity' → reference: SPY
-(Forex reference DXY, crypto reference BTC: added when those phases begin)
+allocator_config.reference_symbol = 'NIFTY-I'  (configurable)
+asset_class: 'equity' → reference: NIFTY-I
+(Commodity reference: GOLD-I; added when commodity strategies are added)
 ```
 
 ### 6.3 Warm-Up Period (Gap 8 Fix)
@@ -494,7 +494,7 @@ First run (cold start, no history at all):
   cold_start = true
   Previous weights: equal across all strategies
   Smoothing: disabled (no previous to blend with)
-  Regime scoring: available if 200+ days of SPY data
+  Regime scoring: available if 200+ days of NIFTY-I data
 ```
 
 -----
@@ -1130,7 +1130,7 @@ regime_persistence_normal   = 3     (days before acting on Bull/Bear/Sideways)
 regime_persistence_highvol  = 1     (days before acting on HighVol)
 correlation_threshold       = 0.70  (above this: reduce smaller strategy)
 drawdown_cluster_threshold  = 5%    (all strategies below → cluster flag)
-reference_symbol            = 'SPY' (equities phase)
+reference_symbol            = 'NIFTY-I' (equities phase)
 transaction_cost_rate       = 0.001 (0.1% for cost-benefit check)
 ```
 
@@ -1292,7 +1292,7 @@ GET /v1/allocator/performance/attribution
   ?from=2025-01-01
 
 GET /v1/allocator/performance/benchmark
-  Portfolio vs. equal-weight vs. SPY benchmark
+  Portfolio vs. equal-weight vs. Nifty 50 benchmark
   ?from=2025-01-01
 
 GET /v1/allocator/kill-switch/status
@@ -1457,7 +1457,7 @@ CREATE TABLE allocator_config (
     regime_persistence_highvol  INTEGER DEFAULT 1,
     correlation_threshold       DECIMAL(4,3) DEFAULT 0.70,
     drawdown_cluster_threshold  DECIMAL(4,3) DEFAULT 0.05,
-    reference_symbol            VARCHAR(20) DEFAULT 'SPY',
+    reference_symbol            VARCHAR(20) DEFAULT 'NIFTY-I',
     transaction_cost_rate       DECIMAL(6,4) DEFAULT 0.001,
     updated_at                  TIMESTAMP DEFAULT NOW(),
     CONSTRAINT single_row CHECK (id = 1)
@@ -1533,16 +1533,16 @@ CREATE TABLE pnl_attribution (
     weight_at_close DECIMAL(6,4),
     daily_return    DECIMAL(8,6),
     attributed_pnl  DECIMAL(12,2),
-    benchmark_return DECIMAL(8,6),         -- SPY return for same day
+    benchmark_return DECIMAL(8,6),         -- Nifty 50 return for same day
     alpha           DECIMAL(8,6),
     INDEX idx_date (date DESC),
     INDEX idx_strategy (strategy_id)
 );
 
--- Benchmark returns (SPY daily)
+-- Benchmark returns (Nifty 50 daily)
 CREATE TABLE benchmark_returns (
     date            DATE PRIMARY KEY,
-    symbol          VARCHAR(20) DEFAULT 'SPY',
+    symbol          VARCHAR(20) DEFAULT 'NIFTY-I',
     daily_return    DECIMAL(8,6),
     cumulative_return DECIMAL(8,6),
     created_at      TIMESTAMP DEFAULT NOW()
@@ -1573,12 +1573,12 @@ This prevents the rebalance itself from distorting strategy P&L.
 ```
 1. Portfolio (actual allocation)
 2. Equal weight (1/n per strategy, daily rebalanced)
-3. SPY buy-and-hold (benchmark)
+3. Nifty 50 buy-and-hold (benchmark)
 4. Risk-free rate (3-month T-bill, approximated from FRED)
 
 Metrics vs benchmark:
-  Alpha = annualized portfolio return - annualized SPY return
-  Beta  = portfolio daily returns correlated with SPY daily returns
+  Alpha = annualized portfolio return - annualized Nifty 50 return
+  Beta  = portfolio daily returns correlated with Nifty 50 daily returns
   Information Ratio = (portfolio_return - benchmark_return)
                     / std(portfolio_return - benchmark_return)
 
@@ -1709,7 +1709,7 @@ INFO:
 
 ```
 From Data Manager:
-  - OHLCV for SPY (regime calculation)
+  - OHLCV for NIFTY-I (regime calculation)
   - Market calendar (holiday/halt detection)
 
 From strategies table:
@@ -1729,7 +1729,7 @@ From Risk Monitor (Redis):
   - Gross exposure per strategy (leverage-adjusted)
 
 From benchmark_returns:
-  - SPY daily returns for attribution
+  - Nifty 50 daily returns for attribution
 ```
 
 ### What the Allocator Writes
@@ -1788,9 +1788,9 @@ Cost:       < $1/month additional (one 10-second run per day)
 ```
 1.  DB schema migrations (all tables above)
 2.  Market calendar integration (standalone, no dependencies)
-3.  Benchmark returns loader (SPY daily, runs with Data Manager)
+3.  Benchmark returns loader (Nifty 50 daily, runs with Data Manager)
 4.  Strategy performance snapshot job (feeds Steps 3+4)
-5.  Regime classifier (standalone, validate against historical SPY)
+5.  Regime classifier (standalone, validate against historical NIFTY-I)
 6.  Config validation pre-flight (test all rules exhaustively)
 7.  Base weight calculator (Step 1)
 8.  Allocation pipeline (Steps 2–6) — unit test each step independently
@@ -1823,7 +1823,7 @@ Cost:       < $1/month additional (one 10-second run per day)
 |9 |Multiple runs same day      |is_primary flag, force confirmation required to override                             |
 |10|Regime persistence          |3-day filter normal regimes, 1-day for HighVol                                       |
 |11|Smoothing convergence       |Documented 3-day convergence, regime-dependent smooth_factor                         |
-|12|Reference symbol            |SPY configurable, equities phase only, expandable                                    |
+|12|Reference symbol            |NIFTY-I configurable, expandable to GOLD-I for commodity phase                                    |
 |13|Config audit trail          |allocator_config_history, immutable, changed_by + reason required                    |
 |14|Manual weight override      |strategy_weight_overrides table, 7-day max expiry                                    |
 |15|Dry run mode                |?dry_run=true on run endpoint, no side effects                                       |
@@ -1834,12 +1834,12 @@ Cost:       < $1/month additional (one 10-second run per day)
 |20|Capital flow protocol       |5 explicit rules, freed capital → cash first → most underweight                      |
 |21|Kill switch                 |4-level portfolio kill switch + strategy-level, stop loss enforcement chain          |
 |22|Transaction costs           |Cost-benefit check, rebalance only if benefit > 2x cost                              |
-|23|Benchmark tracking          |SPY + equal-weight + risk-free tracked, alpha/beta/IR calculated                     |
+|23|Benchmark tracking          |Nifty 50 + equal-weight + risk-free tracked, alpha/beta/IR calculated                     |
 |24|Strategy retirement         |Criteria-based flagging, 14-day observation, human approval to retire                |
 |25|Volatility floor            |Hard floor: vol_20d = max(vol_20d, 0.001) before inverse calculation                 |
 
 -----
 
 **Next step:** When ready to code, start with the Regime Classifier (#5 in build order).
-It has zero dependencies, can be validated against 2+ years of SPY historical data,
+It has zero dependencies, can be validated against 2+ years of NIFTY-I historical data,
 and its output gates everything downstream.

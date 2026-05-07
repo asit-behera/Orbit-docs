@@ -65,25 +65,25 @@ Month 6:       Live Trading + Optimization
 - [ ] Grafana running at https://grafana-xxxx.run.app
 - [ ] Can login (admin/admin)
 
-### Week 2: Data Manager Service
+### Week 2: Ingestion Service + Data Manager
 
 **Tasks:**
 ```
-├─ Build Python service for data ingestion
-├─ Integrate with Yahoo Finance API
-├─ Create database schema (ohlcv, instruments)
-├─ Implement data validation (gaps, outliers)
-├─ Build REST API (/v1/ohlcv, /v1/quality)
-├─ Deploy to Cloud Run
-└─ Test: Fetch 5 years of AAPL data
+├─ Provision e2-small Compute Engine VM (persistent process)
+├─ Build Python ingestion service (TrueData WebSocket)
+├─ Implement TimescaleDB schema (ticks, ohlcv_1min, ohlcv_daily)
+├─ Historical backfill: 11+ years daily, 1.5 months 1min via TrueData API
+├─ Implement data validation (duplicates, outliers, circuit halts)
+├─ Build Data Manager REST API (/v1/ohlcv, /v1/quality)
+└─ Test: Live ticks flowing for NIFTY-I, GOLD-I, RELIANCE
 ```
 
-**Effort:** 20 hours
+**Effort:** 25 hours
 
 **Deliverables:**
-- [ ] Service running on Cloud Run
-- [ ] Can fetch historical OHLCV data
-- [ ] Database populated with test data
+- [ ] Ingestion VM running, WebSocket connected to TrueData
+- [ ] TimescaleDB populated with historical data
+- [ ] Live ticks arriving and stored correctly
 - [ ] Data quality checks working
 - [ ] API returning correct JSON
 
@@ -97,7 +97,7 @@ Month 6:       Live Trading + Optimization
 ├─ Calculate metrics (Sharpe, drawdown, win rate)
 ├─ Build REST API (/v1/backtest)
 ├─ Deploy to Cloud Run
-├─ Test: Run backtest on simple SMA strategy
+├─ Test: Run backtest on simple SMA strategy on NIFTY-I daily data
 ```
 
 **Effort:** 25 hours
@@ -243,10 +243,10 @@ Month 6:       Live Trading + Optimization
 **Tasks:**
 ```
 ├─ Build paper trading service (Python)
-├─ Integrate with broker paper account (Alpaca)
-├─ Real-time market data feed
-├─ Order simulation with realistic fills
-├─ Slippage based on historical bid-ask
+├─ Simulate order fills using live TrueData feed (no broker API needed)
+├─ Lot-aware position sizing (cannot trade fractional lots)
+├─ SPAN margin simulation for F&O and MCX positions
+├─ Intraday MIS auto-squareoff simulation at 15:15 IST
 ├─ Portfolio tracking
 ├─ Deploy to Cloud Run
 ```
@@ -254,11 +254,10 @@ Month 6:       Live Trading + Optimization
 **Effort:** 20 hours
 
 **Deliverables:**
-- [ ] Paper account created with broker
-- [ ] Service consuming live market data
-- [ ] Can submit simulated orders
-- [ ] Fills simulated with realistic latency/slippage
-- [ ] Portfolio updating correctly
+- [ ] Service consuming live TrueData feed
+- [ ] Can simulate lot-based orders with realistic fills
+- [ ] SPAN margin correctly simulated
+- [ ] Portfolio P&L updating correctly
 
 ### Week 2: Strategy → Paper Deployment
 
@@ -315,8 +314,9 @@ Month 6:       Live Trading + Optimization
 **Tasks:**
 ```
 ├─ Build Go service for live execution
-├─ Broker API integration (Alpaca, OANDA for forex)
-├─ Order submission/tracking
+├─ Zerodha Kite API integration (NSE EQ, NFO, MCX)
+├─ Daily access token refresh automation
+├─ Order submission/tracking (MIS, NRML, CNC)
 ├─ Fill handling + audit trail
 ├─ Emergency stop implementation
 ├─ Deploy to Cloud Run
@@ -335,11 +335,11 @@ Month 6:       Live Trading + Optimization
 
 **Tasks:**
 ```
-├─ Daily loss limits ($500)
+├─ Daily loss limits (₹5,000 configurable)
 ├─ Drawdown auto-reduction (50% at -10%)
-├─ Margin monitoring (for forex)
-├─ Correlation checks
-├─ Pre-flight order checks
+├─ SPAN margin monitoring (F&O/MCX)
+├─ MCX physical delivery protection (close 3 days before expiry)
+├─ Pre-flight order checks (lot size validation)
 └─ Kill switch implemented
 ```
 
@@ -356,8 +356,8 @@ Month 6:       Live Trading + Optimization
 **Tasks:**
 ```
 ├─ Deploy live executor to production
-├─ Start with $5,000 capital
-├─ Single strategy (Mean Reversion v1)
+├─ Start with ₹2,00,000–₹5,00,000 capital
+├─ Single equity strategy first (lowest risk)
 ├─ Monitor daily
 ├─ Measure: slippage, fills, latency
 └─ Compare: backtest vs. live
@@ -437,22 +437,23 @@ Month 6:       Live Trading + Optimization
 - [ ] No major issues discovered
 - [ ] Slippage matches assumptions
 
-### Week 4-5: Third Strategy + Forex (Optional)
+### Week 4-5: Third Strategy + Commodity Futures (MCX)
 
 **Tasks:**
 ```
-├─ If you want forex: Add OANDA data source
-├─ New strategy hypothesis (e.g., Forex Momentum)
+├─ Add MCX-specific strategy (e.g., Gold trend-following)
+├─ Verify commodity lot sizing and P&L calculation
+├─ Validate MCX evening session handling (17:00–23:30)
 ├─ Build + validate + paper + live
 └─ Same process as previous strategies
 ```
 
-**Effort:** 25 hours (if doing forex)
+**Effort:** 25 hours
 
 **Deliverables:**
-- [ ] Forex strategy deployed
-- [ ] Multi-asset dashboard
-- [ ] Different risk profiles managed
+- [ ] MCX commodity strategy deployed
+- [ ] Evening session data and execution verified
+- [ ] Physical delivery protection confirmed working
 
 ### Week 6-8: Infrastructure Improvements
 
@@ -482,34 +483,34 @@ Month 6:       Live Trading + Optimization
 
 ```
 Month 1 (Week 1-4):
-├─ Infrastructure (GCP, DB, Redis)
-├─ Data Manager (Yahoo Finance)
-├─ Backtest Engine
+├─ Infrastructure (GCP, TimescaleDB, Redis, Compute VM)
+├─ TrueData ingestion service + historical backfill
+├─ Backtest Engine (India-aware: lots, continuous contracts)
 ├─ Strategy Builder UI
-└─ Deliverable: Can design + backtest strategies
+└─ Deliverable: Can design + backtest strategies on India data
 
 Month 2 (Week 5-8):
 ├─ Validation Suite
-├─ Risk Monitor
+├─ Risk Monitor (SPAN margin aware)
 ├─ Analytics Dashboard
 └─ Deliverable: Can validate rigorously
 
 Month 3 (Week 9-12):
-├─ Paper Trading
-├─ First Strategy (Mean Reversion)
+├─ Paper Trading (lot-aware, SPAN simulated)
+├─ First Strategy on NSE Equity
 └─ Deliverable: Paper trading running 2+ weeks
 
 Month 4 (Week 13-16):
-├─ Live Executor
-├─ Risk Safeguards
-├─ Go Live (small capital)
+├─ Live Executor (Zerodha Kite API)
+├─ Risk Safeguards (MCX delivery protection, MIS squareoff)
+├─ Go Live (small capital, equity first)
 └─ Deliverable: Real money trading, validated strategy
 
 Month 5-6 (Week 17-24):
-├─ Add 2-3 more strategies
-├─ Possibly add forex
+├─ Add NSE Futures strategy (Nifty/BankNifty)
+├─ Add MCX Commodity strategy (Gold/Crude)
 ├─ Infrastructure improvements
-└─ Deliverable: Multi-strategy portfolio
+└─ Deliverable: Multi-segment portfolio
 ```
 
 ---
@@ -590,8 +591,9 @@ Live trading: Your capital ($5k-$50k)
 
 **Then you can:**
 - Scale capital
-- Add more strategies
-- Expand to more assets (crypto, futures)
+- Add more strategies across NSE and MCX
+- Explore NSE Futures (Nifty, BankNifty, stock futures)
+- Phase 2: Options system (see OPTIONS.md)
 - Optimize for performance
 - Share system with friends/family (separate GCP accounts)
 
