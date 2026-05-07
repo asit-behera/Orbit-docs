@@ -1,610 +1,273 @@
 # Implementation Roadmap
 
-6-month timeline to build, test, and deploy the complete trading system. Before starting, complete LEARNING_ROADMAP.md (2-3 months).
+Build phases for the complete trading system.
+**Stack:** Go everywhere. Zerodha. India markets only.
+**Read first:** ARCHITECTURE.md for system overview, LEARNING_ROADMAP.md for market knowledge.
 
 ---
 
 ## Overview
 
 ```
-Month 1-2:     Learn + Design
-Month 3:       Build MVP (Data + Backtest + UI)
-Month 4:       Build Validation + Risk
-Month 5:       Paper Trading + Monitoring
-Month 6:       Live Trading + Optimization
+Phase 0: Foundation         (2–4 weeks)   Infrastructure + data pipeline
+Phase 1: Strategy + Backtest (4–6 weeks)   Backtest engine + Strategy Builder UI
+Phase 2: Validation + Risk  (3–4 weeks)   Validation suite + risk engine
+Phase 3: Paper Trading      (4–8 weeks)   Live paper trading + monitoring
+Phase 4: Live Trading       (ongoing)     Real money, small capital first
 ```
 
 ---
 
-## Phase 1: Learning & Design (Months -2 to -1, Before Project)
+## Phase 0 — Foundation (Weeks 1–4)
 
-**Duration:** 2-3 months (PARALLEL with infrastructure setup)
+**Goal:** All data flowing, database running, infrastructure stable.
+**Nothing tradeable yet — just plumbing.**
 
-**What to do:**
-- Complete LEARNING_ROADMAP.md
-- Read 2-3 books from "Must Read" list
-- Paper trade mentally (find 5 trading ideas)
-- Read 3+ academic papers on trading strategies
-- Join trading communities, observe discussions
+### Week 1–2: GCP + Database
 
-**Deliverables:**
-- [ ] Deep understanding of market mechanics
-- [ ] 5 trading ideas documented
-- [ ] Favorite assets identified (stocks? forex? crypto?)
-- [ ] Risk tolerance defined (max loss per trade?)
-- [ ] First strategy hypothesis written
+```
+Tasks:
+  Create GCP project (trading-core, asia-south1)
+  Create Compute Engine VM (e2-medium, always-on)
+  Create Cloud SQL (PostgreSQL + TimescaleDB extension)
+  Create Cloud Memorystore (Redis, 1 GB)
+  Set up Cloud Pub/Sub (all 13 topics from PUBSUB_SCHEMA.md)
+  Configure Cloud Secret Manager (TrueData, Zerodha, DB creds)
+  Set up VPC + private IPs (no public DB/Redis)
+  Run initial DB migrations (DATA_SCHEMA_INDIA.md schema)
+```
 
-**Effort:** ~10 hours/week (part-time)
+**Done when:** PostgreSQL accessible from VM, TimescaleDB extension enabled.
+
+### Week 3–4: Data Pipeline
+
+```
+Tasks:
+  Build tick-receiver binary (Go) — TrueData WebSocket → Pub/Sub
+  Build db-writer binary (Go) — Pub/Sub events → PostgreSQL/TimescaleDB
+  Historical backfill — 2+ years daily OHLCV for Nifty, BankNifty, Gold, Crude, top 50 equity
+  Instruments master refresh job (08:30 IST, Cloud Scheduler)
+  Zerodha token refresh job (08:45 IST, TOTP automation)
+  Data validation: gap detection, outlier detection, circuit halt flags
+  Deploy all 7 EOD jobs (INGESTION_PIPELINE_SPEC.md)
+```
+
+**Done when:** Live ticks flowing for NIFTY-I, GOLD-I, RELIANCE, BankNifty. Historical data in TimescaleDB.
 
 ---
 
-## Phase 2: MVP Build (Month 1 = Month 3 in absolute time)
+## Phase 1 — Strategy + Backtest (Weeks 5–10)
 
-**Duration:** 4 weeks
+**Goal:** Can design a strategy in the UI, backtest it, see results.
 
-**Focus:** Get data in, backtest working, UI functional
+### Week 5–7: Backtesting Engine
 
-### Week 1: Infrastructure Setup
-
-**Tasks:**
 ```
-├─ Create GCP project (trading-bot)
-├─ Enable Cloud Run, Cloud SQL, Cloud Storage
-├─ Create PostgreSQL instance (db-f1-micro)
-├─ Create Redis instance (1GB)
-├─ Set up VPC, networking
-├─ Configure Cloud Secrets Manager
-└─ Deploy Grafana to Cloud Run
+Tasks:
+  Build backtest-engine Cloud Run service (Go)
+  Event-driven bar-by-bar simulation
+  India-correct costs: SPAN margin, brokerage ₹20 flat, STT
+  Lot-sized position sizing (cannot buy fractional lots)
+  Metrics: Sharpe, drawdown, win rate, R multiples
+  Parameter sweep (grid + random search)
+  REST API: POST /backtest → returns results JSON
 ```
 
-**Effort:** 8 hours (mostly clicking buttons)
+**Test:** Run EMA Crossover (9/21) on NIFTY-I daily data 2022–2025. Check results make sense.
 
-**Deliverables:**
-- [ ] GCP project configured
-- [ ] Database accessible
-- [ ] Grafana running at https://grafana-xxxx.run.app
-- [ ] Can login (admin/admin)
+### Week 8–10: Strategy Builder UI + API
 
-### Week 2: Ingestion Service + Data Manager
-
-**Tasks:**
 ```
-├─ Provision e2-small Compute Engine VM (persistent process)
-├─ Build Python ingestion service (TrueData WebSocket)
-├─ Implement TimescaleDB schema (ticks, ohlcv_1min, ohlcv_daily)
-├─ Historical backfill: 11+ years daily, 1.5 months 1min via TrueData API
-├─ Implement data validation (duplicates, outliers, circuit halts)
-├─ Build Data Manager REST API (/v1/ohlcv, /v1/quality)
-└─ Test: Live ticks flowing for NIFTY-I, GOLD-I, RELIANCE
-```
-
-**Effort:** 25 hours
-
-**Deliverables:**
-- [ ] Ingestion VM running, WebSocket connected to TrueData
-- [ ] TimescaleDB populated with historical data
-- [ ] Live ticks arriving and stored correctly
-- [ ] Data quality checks working
-- [ ] API returning correct JSON
-
-### Week 3: Backtesting Engine Service
-
-**Tasks:**
-```
-├─ Build Python backtest engine (NumPy/Pandas)
-├─ Implement bar-by-bar event loop
-├─ Add slippage/commission modeling
-├─ Calculate metrics (Sharpe, drawdown, win rate)
-├─ Build REST API (/v1/backtest)
-├─ Deploy to Cloud Run
-├─ Test: Run backtest on simple SMA strategy on NIFTY-I daily data
+Tasks:
+  Build strategy-builder-api Cloud Run service (Go)
+    Strategy CRUD (create, read, update, delete)
+    Template library (10 bundled strategies from STRATEGY_SCHEMA.md)
+    Clone template endpoint
+    Promote/demote lifecycle endpoints
+  Build React SPA (Strategy Builder frontend)
+    Condition builder (drag-drop, AND/OR nodes)
+    Score Mode toggle + weight sliders
+    Stop/target configuration (fixed % or ATR-based)
+    Trailing stop setup
+    Parameter definition (min/max/step/optimizable)
+    Backtest trigger → show results
+    Strategy versioning UI
 ```
 
-**Effort:** 25 hours
-
-**Deliverables:**
-- [ ] Service running on Cloud Run
-- [ ] Can execute backtests
-- [ ] Results stored in database
-- [ ] API returns trade history + metrics
-- [ ] Deterministic (same params = same results)
-
-### Week 4: Strategy Builder API + Grafana Dashboard
-
-**Tasks:**
-```
-├─ Build Strategy Builder API (CRUD for strategies)
-├─ Implement JSON schema validation
-├─ Create web UI (React, drag-drop builder)
-├─ Build basic Grafana dashboard
-├─ Integrate backtest results display
-├─ Test: Create, backtest, view results in UI
-```
-
-**Effort:** 30 hours
-
-**Deliverables:**
-- [ ] Web UI accessible at https://app-xxxx.run.app
-- [ ] Can create strategy visually
-- [ ] Can click "Backtest" and see results
-- [ ] Grafana shows backtest metrics
-- [ ] No coding required to build strategy
-
-**Phase 2 Total Effort:** ~80 hours (2 weeks full-time, or 4 weeks part-time)
-
-**By End of Month 1:** Can design strategies, backtest them, see results
+**Done when:** Can create "NIFTY Mean Reversion" in UI, click Backtest, see results in < 30 seconds.
 
 ---
 
-## Phase 3: Validation & Risk (Month 2)
+## Phase 2 — Validation + Risk Engine (Weeks 11–14)
 
-**Duration:** 4 weeks
+**Goal:** Strategies properly validated. Risk rules in place. System won't blow up.
 
-**Focus:** Separate signal from luck, add safeguards
+### Week 11–12: Validation Suite
 
-### Week 1: Validation Suite
-
-**Tasks:**
 ```
-├─ Build validation service (Python/NumPy)
-├─ Implement walk-forward validator
-├─ Implement Monte Carlo analyzer
-├─ Implement regime detector
-├─ Statistical significance calculator
-├─ Deploy to Cloud Run
-├─ Test: Validate sample backtest
+Tasks:
+  Build validation-suite Cloud Run service (Go)
+  Walk-forward analysis (5 folds, IS/OOS split)
+  Monte Carlo simulation (1,000 runs)
+  Regime analysis (Trending / Ranging / High Vol)
+  PASS / CAUTION / FAIL verdict logic
+  Trigger automatically after backtest passes criteria
 ```
 
-**Effort:** 25 hours
+### Week 13–14: Core Engine (Risk + Pre-Trade)
 
-**Deliverables:**
-- [ ] Service running on Cloud Run
-- [ ] Can run walk-forward analysis (5 folds)
-- [ ] Monte Carlo generates 1000 simulations
-- [ ] Regime analysis identifies trending vs. ranging
-- [ ] Produces pass/fail verdict
-
-### Week 2: Risk Monitor Service
-
-**Tasks:**
 ```
-├─ Build Go service for real-time risk
-├─ Implement position sizing (volatility-adjusted)
-├─ Implement drawdown tracking
-├─ Implement margin monitoring
-├─ Implement emergency stops (drawdown > 15%)
-├─ Deploy to Cloud Run
-├─ Redis state management
+Tasks:
+  Build core binary (Go) — partial: risk engine + pre-trade filters only
+  Risk Engine:
+    Kill switch (4 levels, Redis-backed)
+    Position sizing (2% rule + 3 caps)
+    Portfolio Risk Monitor goroutine (every 30s)
+    India guards: SPAN margin, MIS squareoff 15:15, MCX delivery block
+  Pre-Trade Filters:
+    Economic Event Filter (RBI MPC, Budget, FOMC calendar)
+    R:R Engine (ATR stop, dynamic target, min 1.5 R:R)
+    Portfolio Heat Check (max 6% total capital at risk)
+  Segment Modules: equity, futures, commodity
 ```
 
-**Effort:** 20 hours
-
-**Deliverables:**
-- [ ] Service running on Cloud Run
-- [ ] Can calculate position sizes
-- [ ] Tracks portfolio metrics in Redis
-- [ ] Triggers alerts on thresholds
-- [ ] Sub-second latency for checks
-
-### Week 3: Analytics & Monitoring
-
-**Tasks:**
-```
-├─ Build Analytics API (FastAPI)
-├─ Prometheus metrics from each service
-├─ Grafana dashboard: System health
-├─ Grafana dashboard: Trading metrics
-├─ Real-time updates via WebSocket
-├─ P&L tracking, trade logging
-```
-
-**Effort:** 20 hours
-
-**Deliverables:**
-- [ ] Prometheus collecting metrics
-- [ ] Grafana showing system + trading metrics
-- [ ] Live P&L updates
-- [ ] Trade history visible
-- [ ] Cost breakdown (GCP charges)
-
-### Week 4: Integration & Testing
-
-**Tasks:**
-```
-├─ End-to-end testing: Strategy → Backtest → Validation
-├─ Fix integration bugs
-├─ Load testing (can handle 10 simultaneous backtests?)
-├─ Database optimization (query performance)
-├─ Documentation for setup
-```
-
-**Effort:** 15 hours
-
-**Deliverables:**
-- [ ] All services talking to each other
-- [ ] No data loss or corruption
-- [ ] Performance acceptable (<100ms queries)
-- [ ] Deployment scripts documented
-
-**Phase 3 Total Effort:** ~80 hours
-
-**By End of Month 2:** Can validate strategies rigorously, monitor risk, see if strategy is overfitted
+**Done when:** Risk engine rejects trades correctly. Kill switch escalates. MCX delivery block works.
 
 ---
 
-## Phase 4: Paper Trading Setup (Month 3)
+## Phase 3 — Paper Trading + Monitoring (Weeks 15–22)
 
-**Duration:** 4 weeks
+**Goal:** Full system running in paper mode. Strategies validated against live data.
 
-**Focus:** Simulate live trading before risking real money
+### Week 15–17: Core Engine (Full) + Executor
 
-### Week 1: Paper Trading Service
-
-**Tasks:**
 ```
-├─ Build paper trading service (Python)
-├─ Simulate order fills using live TrueData feed (no broker API needed)
-├─ Lot-aware position sizing (cannot trade fractional lots)
-├─ SPAN margin simulation for F&O and MCX positions
-├─ Intraday MIS auto-squareoff simulation at 15:15 IST
-├─ Portfolio tracking
-├─ Deploy to Cloud Run
-```
-
-**Effort:** 20 hours
-
-**Deliverables:**
-- [ ] Service consuming live TrueData feed
-- [ ] Can simulate lot-based orders with realistic fills
-- [ ] SPAN margin correctly simulated
-- [ ] Portfolio P&L updating correctly
-
-### Week 2: Strategy → Paper Deployment
-
-**Tasks:**
-```
-├─ Build deployment pipeline
-├─ Strategy definition → Code generation
-├─ Auto-deploy strategy to paper trading
-├─ Real-time metrics calculation
-├─ Comparison: Backtest vs. Paper
+Tasks:
+  Complete core binary:
+    Tick aggregation (ring buffer, candle building)
+    Strategy evaluation (AND mode + SCORE mode)
+    Composite scoring engine (4 components, 12 edge cases)
+    Pre/post trade pipeline (full flow from CORE_ARCHITECTURE.md)
+    Post-entry monitor goroutine (trailing stop, exit monitoring)
+    Symbol engine supervisor (panic recovery, stall detection, restarts)
+    Strategy Registry with hot loading
+  Build executor binary (Go):
+    Paper Trader (simulated fills, slippage, portfolio tracking)
+    Executor interface (same payload for paper + live)
+    Pub/Sub integration (reads events.orders, writes events.order_results)
+  Build db-writer binary (Go):
+    Consumes all Pub/Sub event topics
+    Writes to TRADE_INTELLIGENCE_SPEC.md tables
 ```
 
-**Effort:** 15 hours
+### Week 18–19: Monitoring + Alerting
 
-**Deliverables:**
-- [ ] Can deploy strategy to paper with 1 click
-- [ ] Paper trading running live
-- [ ] Dashboard shows: backtest vs. paper comparison
-- [ ] Alert if drift > 20%
-
-### Week 3-4: Paper Trading First Strategy
-
-**Tasks:**
 ```
-├─ Build your first real strategy (Mean Reversion v1)
-├─ Run backtest (target: Sharpe > 1.0)
-├─ Run validation (target: pass walk-forward)
-├─ Deploy to paper trading
-├─ Monitor 2-4 weeks
-├─ Compare results to backtest assumptions
+Tasks:
+  Deploy Prometheus on VM
+  Deploy Grafana on VM
+  All 4 dashboards (MONITORING.md)
+  Telegram alerting (all critical + warning alert rules)
+  All Prometheus metrics from MONITORING.md
 ```
 
-**Effort:** 20 hours (mostly waiting + monitoring)
+### Week 20–22: Paper Trading
 
-**Deliverables:**
-- [ ] Strategy in paper trading (2+ weeks)
-- [ ] Live results match backtest ± 10%
-- [ ] Confidence to go live
+```
+Tasks:
+  Deploy 2–3 strategies to paper mode:
+    EMA Crossover (9/21) on NIFTY-I 5m
+    Supertrend on BankNifty 5m
+    ORB (Opening Range Breakout) on NIFTY-I 15m
+  Run for minimum 2 weeks
+  Monitor via Grafana dashboards
+  Compare paper results to backtest expectations
+  Tune: risk rules, score thresholds, trail types
+```
 
-**Phase 4 Total Effort:** ~55 hours (mostly waiting for strategy to run)
-
-**By End of Month 3:** Paper trading running, gathering live data on first strategy
+**Done when:** Paper trading running for 2+ weeks. Results within 20% of backtest Sharpe. No unexpected system errors.
 
 ---
 
-## Phase 5: Live Execution + Optimization (Month 4)
+## Phase 4 — Live Trading (Week 23+)
 
-**Duration:** 4 weeks
+**Goal:** Real money. Small capital first. Grow only after consistency proven.
 
-**Focus:** Real money trading with safeguards
-
-### Week 1: Live Executor Service
-
-**Tasks:**
-```
-├─ Build Go service for live execution
-├─ Zerodha Kite API integration (NSE EQ, NFO, MCX)
-├─ Daily access token refresh automation
-├─ Order submission/tracking (MIS, NRML, CNC)
-├─ Fill handling + audit trail
-├─ Emergency stop implementation
-├─ Deploy to Cloud Run
-```
-
-**Effort:** 25 hours
-
-**Deliverables:**
-- [ ] Service running on Cloud Run
-- [ ] Can submit real orders to broker
-- [ ] Orders executing correctly
-- [ ] All trades logged immutably
-- [ ] Emergency stops functional
-
-### Week 2: Risk Safeguards
-
-**Tasks:**
-```
-├─ Daily loss limits (₹5,000 configurable)
-├─ Drawdown auto-reduction (50% at -10%)
-├─ SPAN margin monitoring (F&O/MCX)
-├─ MCX physical delivery protection (close 3 days before expiry)
-├─ Pre-flight order checks (lot size validation)
-└─ Kill switch implemented
-```
-
-**Effort:** 10 hours
-
-**Deliverables:**
-- [ ] Risk rules enforced automatically
-- [ ] Kill switch (close all positions in 1 click)
-- [ ] All safety limits working
-- [ ] Tested (with paper orders)
-
-### Week 3: Go Live (Small)
-
-**Tasks:**
-```
-├─ Deploy live executor to production
-├─ Start with ₹2,00,000–₹5,00,000 capital
-├─ Single equity strategy first (lowest risk)
-├─ Monitor daily
-├─ Measure: slippage, fills, latency
-└─ Compare: backtest vs. live
-```
-
-**Effort:** 10 hours (mostly monitoring)
-
-**Deliverables:**
-- [ ] Live trading account active
-- [ ] Real trades executing
-- [ ] 2+ weeks of live data
-- [ ] Confidence in execution quality
-
-### Week 4: Optimize & Plan Expansion
-
-**Tasks:**
-```
-├─ Analyze live trading results
-├─ If good: Scale up capital or add strategies
-├─ If bad: Debug, re-validate, adjust
-├─ Plan next strategies to build
-└─ Document learnings
-```
-
-**Effort:** 10 hours
-
-**Deliverables:**
-- [ ] Live trading data analyzed
-- [ ] Decision made: scale or fix
-- [ ] Roadmap for next 3 months
-
-**Phase 5 Total Effort:** ~55 hours
-
-**By End of Month 4:** Live trading, real capital at risk, gathering real-world data
-
----
-
-## Phase 6: Scaling & Multi-Strategy (Month 5-6)
-
-**Duration:** 8 weeks
-
-**Focus:** Add more strategies, increase capital, improve systems
-
-### Week 1-2: Second Strategy Development
-
-**Tasks:**
-```
-├─ Develop strategy hypothesis (e.g., Momentum)
-├─ Build + backtest
-├─ Validate (walk-forward, MC)
-├─ Paper trade 2 weeks
-└─ Go live on small capital
-```
-
-**Effort:** 20 hours
-
-**Deliverables:**
-- [ ] Second strategy live-trading
-- [ ] Multi-strategy dashboard showing both
-- [ ] Correlation between strategies < 0.5
-
-### Week 3: Monitoring & Fine-Tuning
-
-**Tasks:**
-```
-├─ Monitor both strategies
-├─ Analyze trade logs
-├─ Identify regime-specific performance
-├─ Adjust position sizing if needed
-├─ Optimize slippage assumptions
-```
-
-**Effort:** 15 hours
-
-**Deliverables:**
-- [ ] Both strategies performing expected
-- [ ] No major issues discovered
-- [ ] Slippage matches assumptions
-
-### Week 4-5: Third Strategy + Commodity Futures (MCX)
-
-**Tasks:**
-```
-├─ Add MCX-specific strategy (e.g., Gold trend-following)
-├─ Verify commodity lot sizing and P&L calculation
-├─ Validate MCX evening session handling (17:00–23:30)
-├─ Build + validate + paper + live
-└─ Same process as previous strategies
-```
-
-**Effort:** 25 hours
-
-**Deliverables:**
-- [ ] MCX commodity strategy deployed
-- [ ] Evening session data and execution verified
-- [ ] Physical delivery protection confirmed working
-
-### Week 6-8: Infrastructure Improvements
-
-**Tasks:**
-```
-├─ Add distributed backtesting (Ray)
-├─ Implement parameter grid search (faster)
-├─ Auto-scaling for backtests
-├─ Database query optimization
-├─ Better reporting/exports
-```
-
-**Effort:** 20 hours
-
-**Deliverables:**
-- [ ] Can test 100-parameter combinations in 10s
-- [ ] Faster iteration on strategy ideas
-- [ ] Better dashboards + reports
-
-**Phase 6 Total Effort:** ~80 hours
-
-**By End of Month 6:** Multi-strategy live trading, infrastructure solid, ready to expand
-
----
-
-## Timeline Summary
+### Week 23–24: Go Live (Minimum Capital)
 
 ```
-Month 1 (Week 1-4):
-├─ Infrastructure (GCP, TimescaleDB, Redis, Compute VM)
-├─ TrueData ingestion service + historical backfill
-├─ Backtest Engine (India-aware: lots, continuous contracts)
-├─ Strategy Builder UI
-└─ Deliverable: Can design + backtest strategies on India data
+Tasks:
+  Build live executor (Zerodha Kite API integration)
+    Market + limit orders
+    GTT stop-loss placement
+    Fill monitoring (500ms polling)
+    25-modification GTT budget management
+    Emergency stop
+  Zerodha account: verify API access, TOTP setup
+  Start with: 1 strategy, 1 symbol, 1 lot only
+  Capital deployed: ₹1,00,000 (enough for 1 Nifty lot + margin buffer)
+```
 
-Month 2 (Week 5-8):
-├─ Validation Suite
-├─ Risk Monitor (SPAN margin aware)
-├─ Analytics Dashboard
-└─ Deliverable: Can validate rigorously
+**Done when:** First real trade executed, stop placed, fill confirmed in Grafana.
 
-Month 3 (Week 9-12):
-├─ Paper Trading (lot-aware, SPAN simulated)
-├─ First Strategy on NSE Equity
-└─ Deliverable: Paper trading running 2+ weeks
+### Month 6+: Expansion
 
-Month 4 (Week 13-16):
-├─ Live Executor (Zerodha Kite API)
-├─ Risk Safeguards (MCX delivery protection, MIS squareoff)
-├─ Go Live (small capital, equity first)
-└─ Deliverable: Real money trading, validated strategy
+```
+Criteria before adding more:
+  ✓ 30+ live trades with results within 20% of paper results
+  ✓ No unexpected risk engine failures
+  ✓ All monitoring alerts working correctly
+  ✓ Emergency stop tested (in paper mode first)
 
-Month 5-6 (Week 17-24):
-├─ Add NSE Futures strategy (Nifty/BankNifty)
-├─ Add MCX Commodity strategy (Gold/Crude)
-├─ Infrastructure improvements
-└─ Deliverable: Multi-segment portfolio
+Then:
+  Add 2nd strategy (different type — e.g., if first is trend, add mean reversion)
+  Increase capital gradually as confidence builds
+  Add MCX if not already running
+  Deploy Allocator for multi-strategy capital weighting
 ```
 
 ---
 
-## Parallel Work
+## Build Order Priority
 
-**These can happen simultaneously:**
-- Learning (LEARNING_ROADMAP.md) parallel with Phase 2 build
-- First strategy development parallel with Phase 3-4
-- Infrastructure optimization parallel with live trading
+If you can only work on one thing at a time, build in this order:
+
+```
+1. Data pipeline (tick-receiver + db-writer) — everything needs data first
+2. TimescaleDB schema + historical backfill — backtester needs history
+3. Backtest engine — validates strategies before risking anything
+4. Strategy Builder UI — strategy design requires backtest
+5. Risk engine — must exist before any live or paper trading
+6. Core engine — strategy evaluation + goroutine model
+7. Paper executor — test all flows without real money
+8. Monitoring — know the system is healthy before going live
+9. Live executor — final step, real money
+10. Validation suite — can be added after backtest is working
+11. Allocator — needed when running 2+ strategies simultaneously
+```
 
 ---
 
-## Resource Requirements
+## Effort Estimates
 
-### Time Commitment
-```
-Month 1: ~15-20 hours/week (full-time build)
-Month 2: ~15-20 hours/week (full-time build)
-Month 3: ~10 hours/week (monitoring paper trading)
-Month 4: ~10 hours/week (monitoring live trading)
-Month 5-6: ~10 hours/week (adding strategies)
-
-Total: ~250-300 hours (can be done in 6 months part-time)
-```
-
-### Skills Needed
-```
-✓ Python (NumPy, Pandas, FastAPI)
-✓ Go (for low-latency services)
-✓ SQL (PostgreSQL)
-✓ GCP (Cloud Run, Cloud SQL)
-✓ Docker (containerization)
-✓ Git (version control)
-✓ Trading knowledge (from LEARNING_ROADMAP.md)
-```
-
-### Cost
-```
-Development: ~$0 (personal)
-Infrastructure: ~$25-50/month
-Paper trading: $0 (broker demo)
-Live trading: Your capital ($5k-$50k)
-```
+| Phase | Duration | Hours (solo dev) | Notes |
+|---|---|---|---|
+| Phase 0: Foundation | 4 weeks | ~60h | Mostly GCP setup + Go binaries |
+| Phase 1: Backtest + UI | 6 weeks | ~80h | React UI is the bulk |
+| Phase 2: Validation + Risk | 4 weeks | ~50h | Logic-heavy but well-spec'd |
+| Phase 3: Full Core + Paper | 8 weeks | ~100h | Most complex phase |
+| Phase 4: Live | Ongoing | ~20h setup | Then maintenance only |
+| **Total to go live** | **~22 weeks** | **~310h** | ~14h/week at consistent pace |
 
 ---
 
 ## Risk Mitigation
 
-### Before Going Live (Month 4)
-- [ ] Completed learning roadmap
-- [ ] Backtest shows realistic returns
-- [ ] Validation passes (walk-forward, MC)
-- [ ] Paper trading matches backtest
-- [ ] Risk management understood
-- [ ] Comfortable with max loss scenario
-
-### During Live Trading (Months 4+)
-- [ ] Start small ($5k)
-- [ ] Single strategy first
-- [ ] Daily monitoring required
-- [ ] Track: slippage, fills, anomalies
-- [ ] Pause if: daily loss > limit or drawdown > 15%
-- [ ] Review weekly for first month
-
----
-
-## Success Criteria
-
-**By Month 6, you'll have:**
-- ✓ Fully functional trading system
-- ✓ Live trading on 2-3 strategies
-- ✓ Real capital growing (or lessons learned)
-- ✓ Scalable infrastructure
-- ✓ Clear process for adding strategies
-- ✓ Understanding of your edge
-- ✓ Confidence in risk management
-
-**Then you can:**
-- Scale capital
-- Add more strategies across NSE and MCX
-- Explore NSE Futures (Nifty, BankNifty, stock futures)
-- Phase 2: Options system (see OPTIONS.md)
-- Optimize for performance
-- Share system with friends/family (separate GCP accounts)
-
----
-
-## Next Steps
-
-1. **Now:** Complete LEARNING_ROADMAP.md (2-3 months)
-2. **Then:** Follow this roadmap month-by-month
-3. **Reference:** ARCHITECTURE.md (technical details)
-4. **Reference:** STRATEGY_GUIDE.md (building strategies)
-5. **Reference:** DEPLOYMENT.md (GCP setup)
-
-Start learning first. Code second.
+| Risk | Mitigation |
+|---|---|
+| TrueData WebSocket drops | Reconnection with exponential backoff, supervisor restarts tick-receiver |
+| Zerodha API rejects order | Executor catches error, emits rejection event, no retry for market orders |
+| Core crashes with open position | Position Watchdog + Zerodha GTT orders — position protected even if Core is down |
+| Bad strategy deployed live | Strict promotion flow: backtest → validate → paper → sign-off → live |
+| Daily loss limit hit | Kill switch auto-triggers, all new entries blocked |
+| MCX physical delivery | HARD_IRREVOCABLE block 3 days before expiry — code cannot bypass this |

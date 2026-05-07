@@ -1,72 +1,60 @@
 # Strategy Building Guide
 
-How to design, build, test, and deploy trading strategies. Read LEARNING_ROADMAP.md first for market knowledge.
+How to design, build, test, and deploy trading strategies.
+Read LEARNING_ROADMAP.md first for market knowledge foundations.
+All examples use India instruments — Nifty, BankNifty, RELIANCE, Gold.
 
 ---
 
 ## Strategy Anatomy
 
-Every strategy has these components:
+Every strategy has the same structure:
 
 ```
-Entry Conditions  ──┐
-                    ├─→ Signal Generated ──→ Position Sizing ──→ Order Submitted
-Exit Conditions   ──┤
-                    └─→ (How many shares/lots?)
-
-Risk Rules        ──→ (Stop loss, take profit, time exit, etc.)
+Entry Conditions → Signal Generated → Pre-Trade Filters → Order Submitted
+                                           ↓
+                              Position Opened (with stop + target)
+                                           ↓
+                         Post-Entry Monitoring (trailing stop, exit rules)
+                                           ↓
+                                    Position Closed → P&L recorded
 ```
 
 ---
 
 ## Step 1: Develop a Hypothesis
 
-**Before building anything, write your hypothesis clearly:**
+Write your hypothesis before touching the UI.
 
 ### Template
 
 ```
 Name: [Strategy Name]
-
-Market Regime: [Trending / Ranging / All]
+Instrument: [NIFTY-I / RELIANCE / GOLD-I / etc.]
+Timeframe: [5m / 15m / 1h / Daily]
+Market Regime: [Trending / Ranging / High Vol / Any]
 
 Hypothesis:
-"When [CONDITION], price tends to [MOVE], 
-so I will [ACTION] expecting [OUTCOME]"
+"When [CONDITION], price tends to [DIRECTION],
+so I will [BUY/SELL] expecting [TARGET] gain within [N bars]"
 
-Example:
-"When price falls below SMA(50) AND RSI < 30,
-price tends to bounce back up,
-so I will BUY and hold 5 bars expecting +2% gain"
+Example — Nifty Mean Reversion:
+"When Nifty futures are oversold (RSI < 30) AND price is below SMA(50),
+price tends to revert toward the mean,
+so I will BUY 1 lot expecting +2% gain within 5 bars"
 
 Rationale:
-- Why should this work? [Explain the logic]
-- When should it fail? [Identify risks]
-- What data would prove/disprove it? [Testing plan]
+- Why should this work? (institutional buying at oversold levels)
+- When should it fail? (strong downtrend, news event, expiry day)
+- What data would prove/disprove it? (backtest 2022–2025 Nifty futures)
 ```
 
 ### Questions to Answer
 
-1. **What's your edge?**
-   - Is this something most traders miss?
-   - Or are you just jumping on a crowded trade?
-
-2. **When does it work?**
-   - Trending markets? (momentum strategies)
-   - Ranging markets? (mean reversion)
-   - High volatility? (breakouts)
-   - Low volatility? (range trading)
-
-3. **When does it fail?**
-   - Opposite market regime?
-   - After earnings? (for equities)
-   - Central bank news? (for forex)
-   - Market crashes? (correlation breakdown)
-
-4. **What's your risk?**
-   - How much can you lose per trade?
-   - How many trades until you're confident?
-   - What's the max drawdown you'll tolerate?
+1. **What is your edge?** Is there a reason price should move in your direction?
+2. **What regime does this work in?** Mean reversion breaks in strong trends. Trend-following fails in ranging markets.
+3. **When does it fail?** Every strategy fails in certain conditions. Name them before you discover them live.
+4. **What is your risk?** How many ₹ can you lose per trade before the hypothesis is disproved?
 
 ---
 
@@ -74,560 +62,342 @@ Rationale:
 
 ### Entry Conditions
 
-The UI shows a visual rule builder:
+Example — NIFTY Mean Reversion:
 
 ```
-[Entry Conditions]
+Entry Mode: AND (all conditions must be true)
 
-Condition 1:
-├─ Indicator: [Price ▼]
-├─ Comparison: [< ▼]  (>, <, ==, !=, >=, <=)
-├─ Value: [SMA(50) ▼]
-└─ [+ AND] [+ OR]
+Condition 1:  RSI(14) < 30          ← oversold
+Condition 2:  PRICE close < SMA(50) ← price below average
+Condition 3:  VOLUME > AVG_VOLUME(20) ← above average volume (confirmation)
 
-Condition 2:
-├─ Indicator: [RSI ▼]
-├─ Comparison: [< ▼]
-├─ Value: [30]
-└─ [X Remove]
-
-Condition 3:
-├─ Indicator: [Volume ▼]
-├─ Comparison: [> ▼]
-├─ Value: [Avg(20) ▼]
+All three must be true on the same bar close.
 ```
 
-**Available Conditions:**
-```
-Price-based:
-├─ Price > SMA(period)
-├─ Price < Bollinger Band (upper/middle/lower)
-├─ Price at 52-week high/low
-
-Indicator-based:
-├─ RSI > X or RSI < X
-├─ MACD > Signal or MACD < Signal
-├─ Stochastic > X
-
-Volume-based:
-├─ Volume > Avg(period)
-├─ Volume spike (> 2x normal)
-
-Time-based:
-├─ Only trade 9:30-14:00 (avoid close)
-├─ Skip first 30 min (avoid opening volatility)
-├─ Skip days around earnings
-```
-
-**Logic:**
-```
-All conditions must be true (AND logic):
-├─ Price < SMA(50)
-├─ AND RSI < 30
-├─ AND Volume > Avg(20)
-└─ → ENTRY SIGNAL
-```
-
-### Exit Conditions
+Example — EMA Crossover (Trend Following):
 
 ```
-[Exit Conditions]
+Entry Mode: AND
 
-Exit Rule 1: Take Profit
-├─ Type: [Percent ▼]  [Pips] [Amount $]
-├─ Value: [2.0]
-└─ Description: Exit 100% at +2%
-
-Exit Rule 2: Stop Loss
-├─ Type: [Percent ▼]
-├─ Value: [1.0]
-└─ Description: Exit 100% at -1%
-
-Exit Rule 3: Time Exit
-├─ Maximum hold: [5] bars/candles
-└─ Exit if not already closed
-
-Exit Rule 4 (Optional): Exit Signal
-├─ Opposite of entry? [Yes/No ▼]
-└─ OR: RSI > 70 (manual exit condition)
+Condition 1:  EMA(9) crosses_above EMA(21)  ← short MA crosses above long MA
+Condition 2:  ADX(14) > 20                   ← trend is strong enough to follow
 ```
 
-**Common Patterns:**
-```
-Simple (All or Nothing):
-├─ +2% TP, -1% SL, 5-bar max
-
-Partial Profit Taking:
-├─ 50% at +2%
-├─ 25% at +3%
-├─ 25% trailing stop at +2%
-
-Breakeven Stop:
-├─ Move SL to entry after +1% gain
-├─ Protects against losses after initial win
-```
-
-### Position Sizing
+Example — Opening Range Breakout (SCORE Mode):
 
 ```
-[Position Sizing]
+Entry Mode: SCORE
+Score Threshold: 65
 
-Model: [Volatility-Adjusted ▼]
-├─ Fixed Percentage: Risk X% per trade
-├─ Volatility-Adjusted: Scale size by volatility
-├─ Kelly Criterion: Mathematical optimal
-├─ Risk-Based: Fix risk amount, adjust size
+Condition 1:  PRICE close > HIGH_N(2)         weight: 50  ← breaking above range
+Condition 2:  VOLUME_RATIO(10) > 1.5          weight: 30  ← volume confirming
+Condition 3:  SESSION_MINUTES < 60            weight: 20  ← first hour only
 
-Configuration:
-├─ Base Size: [2.0]%  (of account per trade)
-├─ Lookback: [30] days (for volatility calc)
-├─ Max Position: [5.0]%  (don't exceed this)
-├─ Leverage (forex only): [1x ▼]
-
-Preview:
-$100k account, 15% volatility:
-├─ Without adjustment: $2,000 position (2%)
-├─ With adjustment: $1,200 position (1.2%, smaller due to high vol)
-└─ Logic: Don't size up in volatile markets
+Score of 65+ required to enter. Allows 2/3 conditions without the timing one.
 ```
 
-**Why Position Sizing Matters:**
-```
-Bad sizing:
-├─ Same position size regardless of risk
-├─ One bad trade = massive loss
-└─ Can wipe out years of profits
-
-Good sizing:
-├─ Adjust size based on stop distance
-├─ Each trade risks same amount
-└─ Many small losses < few big wins = profit
-```
-
-### Parameters (For Optimization)
+### Stop and Target
 
 ```
-[Optimizable Parameters]
+Stop — ATR-based (recommended):
+  Type: ATR-based
+  Period: 14
+  Multiplier: 1.5
+  → Stop = entry - (ATR × 1.5)
+  
+  Example: Entry ₹19,500, ATR = 80
+  Stop = ₹19,500 - (80 × 1.5) = ₹19,380
+  Risk = ₹120 per unit × 25 lots = ₹3,000
 
-Parameter 1: SMA Period
-├─ Type: Integer
-├─ Range: 20 to 100
-├─ Step: 10
-├─ Default: 50
-├─ Optimizable: ✓ YES
-
-Parameter 2: RSI Threshold
-├─ Type: Integer
-├─ Range: 20 to 40
-├─ Step: 5
-├─ Default: 30
-├─ Optimizable: ✓ YES
-
-Parameter 3: Take Profit %
-├─ Type: Decimal
-├─ Range: 0.5 to 5.0
-├─ Step: 0.5
-├─ Default: 2.0
-├─ Optimizable: ☐ NO (keep fixed)
-
-Parameter 4: Stop Loss %
-├─ Type: Decimal
-├─ Range: 0.5 to 2.0
-├─ Step: 0.5
-├─ Default: 1.0
-├─ Optimizable: ☐ NO (keep fixed)
+Target — R:R driven (recommended):
+  Type: R:R based
+  Desired R:R: 2.0
+  → Target = entry + (risk × 2.0)
+  
+  Target = ₹19,500 + (120 × 2.0) = ₹19,740
+  Reward = ₹240 per unit × 25 lots = ₹6,000
+  R:R = 2.0 ✓
 ```
 
-**Which Parameters to Optimize:**
-```
-GOOD (low overfitting risk):
-├─ Entry indicator periods (20-100)
-├─ Entry thresholds (RSI 20-40)
-├─ These change gradually across regimes
+### Trailing Stop
 
-BAD (high overfitting risk):
-├─ Exit parameters (TP%, SL%)
-├─ Hold periods (why specific 5 bars vs 6?)
-├─ These often curve-fit to past data
+```
+ATR-based trailing stop:
+  Type: ATR-based
+  Period: 14
+  Multiplier: 2.0
+  Min bars between updates: 2
+  
+  On entry at ₹19,500 with stop at ₹19,380:
+  Price rises to ₹19,700 (peak):
+    New trail stop = ₹19,700 - (ATR × 2.0) = ₹19,700 - 160 = ₹19,540
+    Old stop was ₹19,380 → move up to ₹19,540 ✓
+  
+  Stop can only move upward. Never back down.
+```
+
+### Exit Priority
+
+```
+Priority order (first triggered wins):
+1. Forced         (MIS squareoff 15:15, expiry day, MCX delivery)
+2. Risk breach    (daily loss limit, kill switch)
+3. Trailing stop  (GTT at Zerodha, moves with price)
+4. Take profit    (hits R:R target)
+5. Signal exit    (entry conditions reverse)
+6. Time exit      (max 20 bars elapsed)
 ```
 
 ---
 
-## Step 3: Quick Backtest
+## Step 3: Backtest
 
-### Run Initial Test
-
-```
-[Backtest Configuration]
-
-Strategy: Mean Reversion v1
-Asset: [Equities ▼]  [Forex]  [Crypto]
-Symbols: [AAPL]  [+ Add more]
-
-Data Period:
-├─ From: [2015-01-01]
-├─ To: [2023-12-31]
-
-Parameters (use defaults):
-├─ SMA Period: 50
-├─ RSI Threshold: 30
-
-Execution Realism:
-├─ Slippage: [0.02%] [Adaptive ▼]
-├─ Commission: [$1 per trade]
-├─ Leverage: [1x]
-
-[RUN BACKTEST]  (takes ~30 seconds)
-```
-
-### Interpret Results
+Set the backtest parameters:
 
 ```
-[Backtest Results: Mean Reversion v1]
-
-Key Metrics:
-├─ Total Return: 47.3%
-├─ Sharpe Ratio: 1.23 ← Good (>1.0)
-├─ Max Drawdown: -12.4% ← Acceptable
-├─ Win Rate: 52% ← Realistic (>50%)
-├─ Profit Factor: 1.85 ← Good (>1.5)
-└─ Trades: 247 ← Enough data
-
-What These Mean:
-├─ Sharpe 1.23: Return relative to volatility (good)
-├─ Max DD -12.4%: Worst peak-to-trough loss
-├─ Win rate 52%: 52% of trades profitable
-├─ Profit factor 1.85: Total wins / total losses
+Date range:  January 2022 – December 2025  (minimum 3 years)
+Symbol:      NIFTY-I (continuous contract)
+Timeframe:   5m
+Slippage:    0.05%
+Brokerage:   ₹20 per order (₹40 per round trip)
+STT:         0.05% of sell turnover (F&O futures)
+Initial capital: ₹5,00,000
 ```
 
-**Red Flags (Don't Deploy):**
+**Check the results make sense:**
+
 ```
-❌ Sharpe < 0.5  → Not enough return for risk
-❌ Win Rate < 40%  → Something's wrong
-❌ Max DD > 30%  → Too risky
-❌ Trades < 50  → Not enough data
-❌ Profit Factor < 1.2  → Barely breaking even
+Sharpe ratio:     > 1.0              (risk-adjusted return worth the effort)
+Max drawdown:     < 30%             (would you have quit at -20%? Be honest.)
+Win rate:         30–70%            (outside this range = suspicious)
+Profit factor:    > 1.5             (total wins / total losses)
+Total trades:     > 50              (need statistical significance)
+Avg R:R achieved: > 1.2             (are exits working as intended?)
+
+Nifty mean reversion rough benchmarks:
+  Win rate: 40–55% is realistic
+  Avg win: ₹6,000–10,000 per trade (2–3 lots)
+  Avg loss: ₹3,000–5,000 per trade
+  Monthly trades: 10–25
+```
+
+**Red flags in backtest results:**
+
+```
+Win rate > 80%:   likely overfitted — too many conditions
+Sharpe > 3.0:     suspicious — may be curve-fitted
+< 30 trades:      not enough data to trust
+Max DD = 0%:      simulation error — check code
+P&L perfectly smooth: look-ahead bias in code
 ```
 
 ---
 
-## Step 4: Validate (Walk-Forward + Monte Carlo)
+## Step 4: Validate
 
-### Run Validation
-
-Click: [VALIDATE]
+After passing backtest, run the Validation Suite:
 
 ```
-[Validation Running...]
-
 Walk-Forward Analysis:
-├─ Train 2015-2019, Test 2020: ✓ Complete
-├─ Train 2015-2020, Test 2021: ✓ Complete
-├─ Train 2015-2021, Test 2022: ✓ Complete
+  Splits 4 years into 5 chunks
+  Tests in-sample vs out-of-sample
+  Example:
+    Train 2022–2023, test 2023Q1 → Sharpe 1.2 vs 0.9 ✓ (OOS ≥ 70% of IS)
+    Train 2022–2023H1, test 2023H2 → ...
+  All 5 folds must pass
 
-Monte Carlo (1000 simulations):
-├─ 350/1000 sims complete
+Monte Carlo (1,000 simulations):
+  Randomises trade sequence and adds ±0.1% noise
+  Result: "95th percentile max drawdown = 28%"
+  If worst-case drawdown > 40% → CAUTION
 
-Estimated time: 3 minutes remaining
-```
-
-### Interpret Validation Results
-
-```
-[Validation Results]
-
-Walk-Forward Degradation:
-├─ Train Sharpe: 1.45 | Test Sharpe: 0.92 → -37%
-├─ Train Sharpe: 1.23 | Test Sharpe: 0.58 → -53%
-├─ Avg Degradation: -45%
-└─ Verdict: ⚠️ HIGH OVERFITTING
-
-What This Means:
-├─ Backtest (same data): Sharpe 1.23
-├─ Out-of-sample (new data): Sharpe 0.68
-├─ Reason: Strategy was optimized to 2015-2019 noise
-└─ Action: Too risky to trade live
-
-Monte Carlo Robustness:
-├─ Original Sharpe: 1.23
-├─ MC distribution: 0.98 ± 0.35 (std dev)
-├─ Percentile 5: 0.45 (worst case)
-├─ Percentile 95: 1.51 (best case)
-└─ Verdict: MEDIUM (drops under randomization)
-
-Regime Analysis:
-├─ Trending markets: Sharpe 1.8 ✓ GOOD
-├─ Ranging markets: Sharpe 0.2 ⚠️ BAD
-├─ Volatile markets: Sharpe -0.3 ❌ TERRIBLE
-└─ Recommendation: Only trade in uptrends
-
-Overall Verdict: ⚠️ CAUTION - High overfitting detected
-```
-
-### What to Do If Validation Fails
-
-**If walk-forward shows degradation:**
-```
-Original hypothesis: "RSI < 30 bounces work everywhere"
-Reality: "Only work in 2015-2019"
-
-Fix options:
-1. Add filter: Only trade in trending markets (ADX > 25)
-2. Simplify: Remove RSI, just use price below SMA
-3. Different timeframe: Try weekly instead of daily
-4. Different symbol: Works on AAPL but not MSFT
-
-Then re-validate on fresh data
-```
-
-**If regime analysis shows regime-dependency:**
-```
-Strategy only works in trending markets.
-
-Fix:
-├─ Calculate ADX (trend strength)
-├─ Only generate signals when ADX > 25
-├─ Skip signals in ranging markets
-
-Retest → Should see more consistent OOS results
+Verdict: PASS / CAUTION / FAIL
+  PASS:    proceed to paper trading
+  CAUTION: review which folds failed, consider tightening rules
+  FAIL:    back to Step 1 — strategy not robust
 ```
 
 ---
 
-## Step 5: Paper Trading (2-4 Weeks)
-
-### Deploy to Paper
+## Step 5: Paper Trading (Minimum 2 Weeks)
 
 ```
-[Deploy Strategy: Mean Reversion v1]
+Purpose: confirm strategy works on live TrueData ticks, not just historical data
 
-Validation Verdict: ✓ PASSED (after modifications)
+What changes from backtest:
+  Ticks are messier than clean historical bars
+  Slippage may differ from assumed
+  TrueData occasionally sends duplicate or late ticks
+  Real-world events (RBI meetings, budget) not in backtest
 
-Target: [☑ Paper Trading] [☐ Live Trading]
+Watch for:
+  Paper Sharpe within 20% of backtest Sharpe → acceptable
+  Paper Sharpe < 50% of backtest Sharpe → investigate before going live
 
-Paper Configuration:
-├─ Initial Capital: [$100,000]
-├─ Duration: [2 weeks]
-├─ Auto-graduate to live: [Never - Manual decision]
+Paper trading P&L examples (Nifty, 1 lot, 5m):
+  Good day:  3 trades, +₹6,000 net
+  Bad day:   2 trades, -₹3,500 net
+  Average:   1–2 trades, +₹1,500–2,500 net
 
-[START PAPER TRADING]
-```
-
-### Monitor Paper Trading
-
-```
-[Paper Trading Dashboard: Mean Reversion v1]
-
-Status: RUNNING (8 days)
-
-Performance:
-├─ Backtest Sharpe: 1.23
-├─ Paper Sharpe (8d): 1.18
-├─ Difference: -4% ✓ OK (within tolerance)
-
-Backtest vs Paper Comparison:
-Metric              Backtest  Paper   Diff
-─────────────────────────────────
-Avg slippage        $1.20     $1.08   -10%
-Avg fills/day       2.3       2.1     -9%
-Win rate            52%       54%     +2%
-Sharpe              1.23      1.18    -4%
-
-Status: ✓ MATCHING - Ready to review for live
-
-Recent Trades:
-2025-05-03 14:30 - BUY AAPL @ 152.30, current 152.50 (+$20)
-2025-05-03 13:15 - SELL MSFT @ 310.50, closed +$120
-2025-05-02 16:45 - BUY GOOGL @ 139.80, closed -$50
-```
-
-### Decision Criteria for Live
-
-Go live only if:
-```
-✓ Backtest Sharpe > 1.0
-✓ Paper trading running 2+ weeks
-✓ Paper results within 10% of backtest
-✓ No major slippage surprises
-✓ You understand why trades happen
-✓ You can watch it daily (first month)
-✓ Risk management understood (max position, max DD)
-✓ Comfortable with max loss scenario
+After 2 weeks of paper, review:
+  Was the strategy pattern actually happening in live market?
+  Were signals firing at expected frequency?
+  Were stop losses being hit more than expected?
 ```
 
 ---
 
-## Step 6: Live Trading
+## Step 6: Go Live (Small Capital First)
 
-### Deploy to Live (Small)
-
-```
-[Deploy to Live: Mean Reversion v1]
-
-⚠️  WARNING: REAL MONEY ⚠️
-
-Risk Acknowledgment:
-☑ I understand this is real money
-☑ Strategy may lose money
-☑ Past performance ≠ future
-☑ Max loss tolerance: $1,000
-
-Starting Capital: [$5,000]
-  ↑ Start small! Don't risk account on 1 strategy.
-
-Position Limits:
-├─ Max per trade: 2% of capital
-├─ Max portfolio: 5% in any symbol
-├─ Max margin used: 70%
-
-Safety Limits:
-├─ Daily loss limit: $500 (pause if hit)
-├─ Drawdown limit: 10% (close half)
-├─ Drawdown limit: 15% (close all)
-
-[GO LIVE NOW]
-```
-
-### Monitor Live
+**Promotion checklist before switching to live:**
 
 ```
-[Live Trading: Mean Reversion v1]
+Strategy readiness:
+  ✓ Passed backtest (Sharpe ≥ 1.0, DD < 30%, 50+ trades)
+  ✓ Passed validation suite (PASS verdict)
+  ✓ 2+ weeks paper trading with acceptable divergence
+  ✓ Reviewed paper trade list manually — signals look sensible
 
-Status: ✓ RUNNING (3 days)
+System readiness:
+  ✓ Kill switch tested (fires at correct drawdown thresholds)
+  ✓ MIS squareoff tested in paper (positions close at 15:15)
+  ✓ Trailing stop updating in Grafana dashboard
+  ✓ Telegram alerts firing (at least one test alert received)
+  ✓ Emergency stop tested (POST /emergency/stop-all in paper mode)
+  ✓ Zerodha GTT order placed manually — confirmed it works
 
-P&L: +$340 (6.8% on $5k)
-
-Trades Today:
-├─ 14:35 - BUY AAPL @ 152.30, current 152.50 (+$20)
-├─ 13:15 - SELL MSFT @ 310.50, closed +$120
-
-Slippage Average: $1.15 (vs backtest $1.20)
-Fills: All market orders filled instantly
-
-Backtest vs Live (3-day comparison):
-├─ Backtest (historical): Sharpe 1.23
-├─ Live (3 days): Sharpe 1.80
-├─ Note: Too early to judge, only 3 days
-
-[PAUSE] [CLOSE POSITION] [REDUCE SIZE] [DETAILS]
+Capital for first live trade:
+  Minimum: enough for 1 lot + 50% margin buffer
+  Nifty (1 lot = 25 units): SPAN ~₹1,12,000 + buffer → ₹1,50,000
+  BankNifty (1 lot = 15 units): SPAN ~₹50,000 + buffer → ₹75,000
+  Start with 1 strategy, 1 symbol, 1 lot only
 ```
 
 ---
 
-## Strategy Improvement
+## India Strategy Examples
 
-### After 1 Month of Live Trading
-
-Review:
-```
-[Review: Mean Reversion v1 - 1 Month Live]
-
-Performance:
-├─ Live P&L: +$1,240 (24.8% on $5k, annualized ~297%)
-├─ Live Sharpe: 1.45 ← Exceeding backtest!
-├─ Win rate: 56%
-├─ Max DD: -3.2% (within tolerance)
-
-Observations:
-1. Live slippage averaged $1.08 (vs $1.20 backtest) ✓ Better
-2. Fills faster than expected (market impact lower)
-3. No regime surprises (stuck to uptrend)
-4. Risk management worked (never hit daily loss limit)
-
-Next Steps:
-├─ Scale: Increase initial capital from $5k to $15k
-├─ Add signals: Momentum in uptrend also looks good
-├─ Diversify: Trade 5 stocks instead of just AAPL
-
-OR
-
-├─ Something Broke? Re-validate.
-├─ Market changed? Run backtest on recent data.
-└─ Strategy diverged? Add new signal filter.
-```
-
----
-
-## Common Strategy Patterns
-
-### Pattern 1: Mean Reversion (Easiest to Build)
+### Example 1 — Nifty Mean Reversion (5m, FNO)
 
 ```
-Hypothesis: Prices bounce back from extremes
+Hypothesis: Nifty oversold conditions on 5m bars tend to revert within the session.
 
-Entry:
-├─ Price falls below SMA(50)
-├─ AND RSI < 30
-├─ AND Volume above average
+Entry (AND mode):
+  RSI(14) < 30
+  PRICE close < SMA(50)
+  VOLUME > AVG_VOLUME(20)
 
-Exit:
-├─ +2% profit
-├─ -1% loss
-├─ 5 bars max
+Stop:  ATR(14) × 1.5 below entry
+Target: 2.0 R:R from stop
+Trail: ATR(14) × 2.0 chandelier exit
 
-Best In: Ranging, low-trending markets
-Worst In: Strong uptrends
+Risk:  1% of capital (≈ ₹5,000 on ₹5L account)
+Trade window: 09:30–14:30 (avoid last hour volatility)
+Avoid expiry Thursdays: YES
+
+Typical trade:
+  Entry: ₹19,500 (1 lot = 25 units)
+  Stop: ₹19,380 (₹120 below, risk ₹3,000)
+  Target: ₹19,740 (₹240 above, reward ₹6,000)
+  R:R: 2.0
 ```
 
-### Pattern 2: Momentum (Moderate Difficulty)
+### Example 2 — EMA Crossover Trend (5m, FNO)
 
 ```
-Hypothesis: Strong moves continue for a while
+Entry (AND mode):
+  EMA(9) crosses_above EMA(21)
+  ADX(14) > 20
 
-Entry:
-├─ Price > SMA(50)
-├─ AND price > 20-day high
-├─ AND volume > average
+Stop:  ATR(14) × 1.5
+Target: 2.0 R:R
+Trail: ATR(14) × 2.0
 
-Exit:
-├─ +3% profit
-├─ -2% loss
-├─ 10 bars max
-
-Best In: Trending, bull markets
-Worst In: Choppy ranges
+Avoid: avoid_expiry_day = true
+Best in: trending markets (ADX filter ensures this)
 ```
 
-### Pattern 3: Trend Following (Hard to Get Right)
+### Example 3 — ORB on Nifty (15m, FNO)
 
 ```
-Hypothesis: Trends persist longer than we expect
+Entry (SCORE mode, threshold 65):
+  PRICE close > HIGH_N(2)    weight: 50
+  VOLUME_RATIO(10) > 1.5     weight: 30
+  SESSION_MINUTES < 60       weight: 20
 
-Entry:
-├─ Price breaks above 50-day high
-├─ Confirmation: Volume or MACD
+Trade window: 09:30–11:00 only
+Stop: ATR(14) × 2.0 (wider stop for breakouts)
+Target: 3.0 R:R (breakouts can run far)
+```
 
-Exit:
-├─ Trailing stop (e.g., 3% below highest price)
-├─ Or: RSI extreme reversal
+### Example 4 — Donchian Breakout on Gold (1h, MCX)
 
-Best In: Strong, sustained trends
-Worst In: Whipsaws in ranges
+```
+Entry (AND mode):
+  PRICE close > HIGH_N(20)   ← 20-period high breakout
+  VOLUME > AVG_VOLUME(10)
+
+Stop: ATR(14) × 2.0
+Target: 3.0 R:R
+MCX delivery block: 3 days before expiry (automatic)
+Trade window: 09:00–22:00 (avoids last 30 min)
 ```
 
 ---
 
-## Checklist Before Going Live
+## Common Mistakes
 
-- [ ] Hypothesis is clear and testable
-- [ ] Backtest passes (Sharpe > 1.0)
-- [ ] Validation passes (walk-forward, MC, regimes)
-- [ ] Paper trading 2+ weeks
-- [ ] Paper results match backtest ± 10%
-- [ ] You've read strategy rules 10 times
-- [ ] You understand max loss scenario
-- [ ] Position sizing rules understood
-- [ ] You can check daily first month
-- [ ] Emergency stops configured
-- [ ] Risk limits set in platform
-- [ ] Broker API working smoothly
+```
+1. Optimising exit parameters
+   Don't optimise take_profit_pct or stop_loss_pct.
+   They overfit immediately. Use ATR-based exits instead.
+
+2. Ignoring lot sizes
+   Nifty = 25 units per lot. BankNifty = 15. Gold = 100g.
+   Position sizing must respect lot boundaries.
+   Can't buy 0.5 lots.
+
+3. Trading on expiry Thursday without testing it
+   Expiry days have wildly different behaviour.
+   Set avoid_expiry_day = true until you've specifically tested expiry.
+
+4. Ignoring India VIX
+   VIX > 20 changes how mean reversion strategies behave.
+   The scoring engine automatically penalises mean reversion in high-VIX.
+   But understand WHY before overriding.
+
+5. Going live too fast
+   Paper trading for 2 weeks feels slow.
+   But 2 weeks is only ~20–30 trades for a 5m strategy.
+   That's not enough to know if the strategy works.
+   Run paper for a full month if possible.
+
+6. Starting with too much capital
+   1 lot of Nifty requires ~₹1.2L margin.
+   Don't deploy ₹5L to a single strategy on day 1.
+   Start with 1 lot, verify the system works, then scale.
+```
 
 ---
 
-## Next Steps
+## Strategy Improvement (Ongoing)
 
-1. Complete learning roadmap (LEARNING_ROADMAP.md)
-2. Follow development timeline (ROADMAP.md)
-3. Deploy infrastructure (DEPLOYMENT.md)
-4. Build first strategy using these steps
-5. Validate thoroughly before live trading
+After each month of live trading, review:
+
+```
+From Grafana → Strategy Performance dashboard:
+  Is live win rate within 20% of backtest win rate?
+  Is average R:R achieved close to target R:R?
+  Are stop losses being hit at expected frequency?
+  Are trailing stops triggering too early or too late?
+
+From Analytics → Rejection Analysis:
+  What % of signals are being blocked by risk rules?
+  Are any rejection reasons dominating?
+  Would blocked trades have been profitable? (enrichment data)
+
+From Trade list (manual review monthly):
+  Look at the 5 worst trades — what happened?
+  Look at 5 missed signals — were they good setups?
+  Is the strategy misfiring on any specific day/time?
+```

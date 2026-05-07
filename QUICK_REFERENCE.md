@@ -1,379 +1,256 @@
-# Quick Reference & Navigation
+# Quick Reference
 
-Fast lookup for different aspects of the project.
-
----
-
-## 📚 Documentation Map
-
-### Getting Started
-1. **[README.md](../README.md)** ← Start here
-2. **[LEARNING_ROADMAP.md](./LEARNING_ROADMAP.md)** ← Learn markets (2-3 months)
-3. **[ROADMAP.md](./ROADMAP.md)** ← Build timeline (6 months)
-
-### Understanding the System
-4. **[ARCHITECTURE.md](./ARCHITECTURE.md)** ← Technical design
-5. **[PRODUCTS.md](./PRODUCTS.md)** ← Product specs
-6. **[STRATEGY_GUIDE.md](./STRATEGY_GUIDE.md)** ← Build strategies
-
-### Deployment
-7. **[DEPLOYMENT.md](./DEPLOYMENT.md)** ← GCP setup (not yet created)
-8. **[MONITORING.md](./MONITORING.md)** ← Grafana dashboards (not yet created)
+Fast lookup. Common questions. Navigation guide.
+**Updated May 2026** — India markets, Go stack, Zerodha only.
 
 ---
 
-## 🎯 Quick Answers
+## Documentation Map
+
+### Start Here
+1. **README.md** — Project overview, what this is
+2. **INDEX.md** — Complete list of all 29 files with reading paths
+
+### Core System
+3. **ARCHITECTURE.md** — System overview and technology decisions
+4. **PRODUCTS.md** — What each of the 8 products does
+
+### Build Guide
+5. **ROADMAP.md** — Phase-by-phase build plan
+6. **DEPLOYMENT.md** — GCP setup, costs, CI/CD
+
+### Strategy
+7. **STRATEGY_GUIDE.md** — How to build and deploy strategies (start here)
+8. **STRATEGY_SCHEMA.md** — Strategy JSON format, indicator library
+9. **STRATEGY_LIFECYCLE.md** — Promotion flow, versioning
+
+### Deep Technical
+10. **CORE_ARCHITECTURE.md** — Goroutine model, full pipeline diagram
+11. **PUBSUB_SCHEMA.md** — All 13 message topics
+12. **RISK_ENGINE_SPEC.md** — Kill switch, position sizing, India guards
+13. **EXECUTION_SPEC.md** — Order flow, paper trader, rejections
+
+---
+
+## Quick Answers
 
 ### "What is this project?"
-**Answer:** A personal automated trader for equities, forex, and crypto. Visual strategy builder, rigorous backtesting, paper trading, then live trading.
+A personal automated trading system for Indian markets (NSE equity, NSE F&O, MCX commodities). Visual strategy builder, rigorous backtesting, paper trading simulation, then live execution via Zerodha.
 
-See: [README.md](../README.md) → Quick Start section
+### "What tech stack?"
+- Language: Go (all services)
+- Compute: Compute Engine VM (always-on) + Cloud Run (on-demand)
+- Messaging: Cloud Pub/Sub (13 topics)
+- Database: TimescaleDB + PostgreSQL (Cloud SQL)
+- Cache: Redis (Cloud Memorystore)
+- Broker: Zerodha Kite Connect only
+- Cost: ~₹7,200/month infra + ~₹2,000/month TrueData + ₹500 Zerodha API
 
-### "How do I get started?"
-**Answer:** 
-1. Read README.md
-2. Read LEARNING_ROADMAP.md (2-3 months)
-3. Read ROADMAP.md (6-month plan)
-4. Start coding Phase 1
+### "What markets do we trade?"
+- NSE Equity (EQ) — large-cap stocks
+- NSE F&O — Nifty, BankNifty, stock futures
+- MCX — Gold, Silver, Crude Oil, Natural Gas
+- NOT crypto, NOT US stocks, NOT forex
 
-See: [README.md](../README.md) → Getting Started section
-
-### "What do I need to learn about trading?"
-**Answer:** Markets, technical analysis, risk management, strategy validation.
-
-See: [LEARNING_ROADMAP.md](./LEARNING_ROADMAP.md) → 6-phase learning plan
+### "What is the 8-product system?"
+1. Data Manager — ingest TrueData ticks + historical OHLCV
+2. Strategy Builder — visual drag-drop condition editor
+3. Backtesting Engine — historical simulation with India costs
+4. Validation Suite — walk-forward + Monte Carlo robustness checks
+5. Allocator — daily capital weight calculation per strategy
+6. Core Trading Engine — live tick processing, signals, risk management
+7. Paper Trader — simulated execution on live data
+8. Live Executor — real execution via Zerodha Kite API
 
 ### "How do I build a strategy?"
-**Answer:** 
-1. Write hypothesis (what pattern you're trading)
-2. Drag-drop logic in Strategy Builder UI
-3. Backtest
-4. Validate (walk-forward, Monte Carlo)
-5. Paper trade 2+ weeks
-6. Go live (small capital)
+1. Write hypothesis (what market pattern are you trading?)
+2. Build in Strategy Builder UI (drag-drop conditions)
+3. Backtest (Sharpe ≥ 1.0, 50+ trades, drawdown < 30%)
+4. Validate (walk-forward passes, Monte Carlo passes)
+5. Paper trade minimum 2 weeks on live TrueData data
+6. Review: paper results within 20% of backtest
+7. Human sign-off → go live (1 lot first)
 
-See: [STRATEGY_GUIDE.md](./STRATEGY_GUIDE.md) → 6-step process
+See: STRATEGY_GUIDE.md for full walkthrough with India examples
 
-### "What are the 8 products?"
-**Answer:** 
-1. Data Manager (ingest market data)
-2. Strategy Builder (visual editor)
-3. Backtesting Engine (test on history)
-4. Validation Suite (separate luck from skill)
-5. Risk Monitor (position sizing + stops)
-6. Analytics Dashboard (P&L tracking)
-7. Paper Trading (risk-free simulation)
-8. Live Executor (real money trading)
+### "How long to build this?"
+~22 weeks at 14 hours/week (solo developer):
+- Phase 0 (foundation): 4 weeks
+- Phase 1 (backtest + UI): 6 weeks
+- Phase 2 (validation + risk): 4 weeks
+- Phase 3 (paper trading + monitoring): 8 weeks
+- Phase 4 (live trading): ongoing
 
-See: [PRODUCTS.md](./PRODUCTS.md) → Product overview
+See: ROADMAP.md for full build phases
 
-### "What's the tech stack?"
-**Answer:** 
-- Languages: Python, Go, FastAPI
-- Database: PostgreSQL + Parquet
-- Infrastructure: GCP Cloud Run
-- Monitoring: Prometheus + Grafana
-- Cost: ~$25-50/month
+### "What is Score Mode?"
+Instead of requiring ALL conditions to be true (AND mode), Score Mode assigns weights to conditions. If the total weighted score exceeds a threshold, the strategy fires.
 
-See: [ARCHITECTURE.md](./ARCHITECTURE.md) → Technology Stack section
+Example: RSI(40) + SMA(35) + Volume(25) = 100 total. Threshold = 70.
+RSI met + SMA met but not Volume → score 75 ≥ 70 → SIGNAL.
 
-### "How long does this take?"
-**Answer:** 
-- Learning: 2-3 months
-- Building: 6 months
-- Total: ~9 months
+See: SCORING_ENGINE.md, STRATEGY_SCHEMA.md
 
-First live trade: Month 4 (with learning parallel)
-First profit: Month 6+
+### "What is the kill switch?"
+4-level automatic protection based on portfolio drawdown:
+- Level 1 (DD > 8%): reduce position sizes to 50%
+- Level 2 (DD > 12%): block all new entries
+- Level 3 (DD > 15%): close all positions at market
+- Level 4: manual emergency trigger
 
-See: [ROADMAP.md](./ROADMAP.md) → Timeline
+Levels 2–4 require manual reset. Cannot auto-recover.
 
-### "How much money do I need?"
-**Answer:**
-- Infrastructure: $25-50/month
-- Live trading: Start with $5,000
-- Total: $5,025-$5,050 to start
-- Can scale with profits
+See: RISK_ENGINE_SPEC.md
 
-See: [ROADMAP.md](./ROADMAP.md) → Resource Requirements
+### "What is the R:R Engine?"
+Before every trade, the system calculates risk:reward ratio.
+Stop price is set (ATR-based or fixed %). Target is set (R:R-driven or fixed %).
+If reward/risk < minimum threshold (default 1.5), trade is rejected.
 
-### "Can I trade forex?"
-**Answer:** Yes, absolutely. Same system, different data sources (OANDA, IB).
+Example: Stop = ₹120 below entry. Target = ₹240 above (2:1 R:R). ✓
+Example: Stop = ₹300 below entry. Target = ₹150 above (0.5:1 R:R). ✗ REJECTED.
 
-See: [ARCHITECTURE.md](./ARCHITECTURE.md) → Asset Support
+See: RR_ENGINE_SPEC.md
 
-### "Can I add more strategies later?"
-**Answer:** Yes, easily. Built-in multi-strategy support with correlation checks.
+### "What is trailing stop?"
+After a position is entered, the stop loss moves toward price as it moves in your favour. It never moves against you.
 
-See: [STRATEGY_GUIDE.md](./STRATEGY_GUIDE.md) → Strategy Improvement
+Example (ATR-based, multiplier 2.0):
+- Entry ₹19,500, initial stop ₹19,380 (ATR × 1.5 = 120)
+- Price rises to ₹19,700 → new trail stop = ₹19,700 - (ATR × 2.0) = ₹19,540
+- Price rises to ₹20,000 → new trail stop = ₹19,760
+- Price falls to ₹19,760 → STOP HIT → exit with profit
 
-### "What if my strategy fails?"
-**Answer:** Validation catches most failures before live trading. Paper trading catches the rest.
+Zerodha limit: 25 GTT modifications per order. System auto-refreshes at 22.
 
-See: [STRATEGY_GUIDE.md](./STRATEGY_GUIDE.md) → Validation
+See: TRAILING_STOP_SPEC.md
 
-### "Can I share this with friends/family?"
-**Answer:** Yes. Deploy to their own GCP account (completely isolated).
+### "Why is the executor separate from core?"
+Core is responsible for intelligence (decide what to trade).
+Executor is responsible for execution (call Zerodha API).
+Separation allows executor to restart without stopping core.
+Both communicate via Pub/Sub — loose coupling, each has single responsibility.
 
-See: [README.md](../README.md) → System Architecture
+### "What happens if core crashes with an open position?"
+1. Position Watchdog (separate goroutine) monitors all open positions every 30s
+2. GTT stop-loss order already placed at Zerodha — survives Core crash
+3. On Core restart: loads open positions from Redis, resumes monitoring
+4. If stop is already breached: emergency close fires immediately on restart
 
----
+See: CORE_ARCHITECTURE.md (Position Watchdog section)
 
-## 📖 Reading by Role
+### "How do paper trading and live trading switch?"
+Same Executor binary, same Order payload. The `execution_mode` field on the order determines which path:
+- `paper` → Paper Trader (simulated fills)
+- `live` → Zerodha Kite API (real fills)
 
-### I'm a Software Engineer
-Read in order:
-1. README.md (overview)
-2. ARCHITECTURE.md (technical design)
-3. PRODUCTS.md (product specs)
-4. ROADMAP.md (timeline)
-5. LEARNING_ROADMAP.md (what to learn about markets)
-
-### I'm a Trader
-Read in order:
-1. README.md (overview)
-2. LEARNING_ROADMAP.md (market knowledge)
-3. STRATEGY_GUIDE.md (build strategies)
-4. PRODUCTS.md (what each tool does)
-5. ROADMAP.md (timeline)
-
-### I Want to Deploy ASAP
-Read in order:
-1. README.md (quick start)
-2. DEPLOYMENT.md (GCP setup)
-3. ROADMAP.md → Phase 1 (infrastructure)
-4. Then: LEARNING_ROADMAP.md (while waiting for Phase 2)
+Switch via Strategy Builder UI → changes `execution_mode` in strategy JSON → publishes change to Core via Pub/Sub → Core's next signal uses new mode.
 
 ---
 
-## 🔍 Topic Deep Dives
+## Checklists
 
-### Learning Markets
-- **Foundations:** LEARNING_ROADMAP.md → Phase 1
-- **Technical Analysis:** LEARNING_ROADMAP.md → Phase 2
-- **Risk Management:** LEARNING_ROADMAP.md → Phase 3
-- **Validation Concepts:** LEARNING_ROADMAP.md → Phase 4
-- **Building Strategies:** LEARNING_ROADMAP.md → Phase 5-6
-
-### System Architecture
-- **Overview:** ARCHITECTURE.md → System Overview
-- **Database:** ARCHITECTURE.md → Database Schema
-- **APIs:** ARCHITECTURE.md → API Design
-- **Data Flow:** ARCHITECTURE.md → Data Flow
-- **Deployment:** ARCHITECTURE.md → Deployment Architecture
-
-### Building Strategies
-- **Hypothesis:** STRATEGY_GUIDE.md → Step 1
-- **Visual Builder:** STRATEGY_GUIDE.md → Step 2
-- **Backtesting:** STRATEGY_GUIDE.md → Step 3
-- **Validation:** STRATEGY_GUIDE.md → Step 4
-- **Paper Trading:** STRATEGY_GUIDE.md → Step 5
-- **Live Trading:** STRATEGY_GUIDE.md → Step 6
-
-### Each Product
-- **Data Manager:** PRODUCTS.md → Section 1
-- **Strategy Builder:** PRODUCTS.md → Section 2
-- **Backtesting Engine:** PRODUCTS.md → Section 3
-- **Validation Suite:** PRODUCTS.md → Section 4
-- **Risk Monitor:** PRODUCTS.md → Section 5
-- **Analytics Dashboard:** PRODUCTS.md → Section 6
-- **Paper Trading:** PRODUCTS.md → Section 7
-- **Live Executor:** PRODUCTS.md → Section 8
-
-### Implementation Timeline
-- **Month 1:** ROADMAP.md → Phase 2 (MVP Build)
-- **Month 2:** ROADMAP.md → Phase 3 (Validation & Risk)
-- **Month 3:** ROADMAP.md → Phase 4 (Paper Trading)
-- **Month 4:** ROADMAP.md → Phase 5 (Live Execution)
-- **Months 5-6:** ROADMAP.md → Phase 6 (Scaling)
-
----
-
-## 📋 Checklists
-
-### Before Learning Markets
-- [ ] Have 5-6 hours/week for 2-3 months
-- [ ] Access to TradingView (free)
-- [ ] Access to financial news (free)
-- [ ] Willingness to read books
-
-### Before Starting Development
-- [ ] GCP account (free trial)
-- [ ] Git/GitHub account
-- [ ] Python 3.11+ installed
-- [ ] Docker installed
-- [ ] ~15 hours/week for 6 months
-
-### Before Going Live (Week 1)
-- [ ] Completed learning roadmap
-- [ ] System fully deployed on GCP
-- [ ] First strategy backtest ready
-- [ ] Validation passes
-- [ ] Paper trading running
-
-### Before First Live Trade (Week 13)
-- [ ] First strategy paper trading 2+ weeks
-- [ ] Paper results match backtest ± 10%
-- [ ] Slippage assumptions verified
-- [ ] Risk limits understood
-- [ ] Emergency stop tested
-- [ ] Max loss scenario accepted
-- [ ] Comfortable with <$100/day loss
-
----
-
-## 🚀 Key Milestones
-
+### Before Running Backtest
 ```
-Learning Phase (Months -3 to -1):
-├─ Week 1-3: Market fundamentals
-├─ Week 4-7: Technical analysis
-├─ Week 8-10: Trading concepts
-├─ Week 11-12: Strategy research
-└─ Goal: Deep understanding of markets
+✓ At least 3 years of data available for this symbol
+✓ Strategy hypothesis written down (not just gut feeling)
+✓ Stop and target configured (not just entry conditions)
+✓ Lot size set to read from instruments table (not hardcoded)
+✓ Brokerage and STT costs included in backtest config
+```
 
-Development Phase 1 (Month 1):
-├─ Week 1: Infrastructure setup
-├─ Week 2: Data ingestion working
-├─ Week 3: Backtesting functional
-├─ Week 4: Strategy builder UI live
-└─ Goal: Can design + backtest
+### Before Paper Trading
+```
+✓ Backtest passed: Sharpe ≥ 1.0, trades ≥ 50, DD < 30%
+✓ Validation suite: PASS verdict
+✓ Risk rules reviewed: trade window, avoid_expiry_day, max positions
+✓ Monitoring running: Grafana accessible, Telegram alerts configured
+✓ Kill switch tested: verified it fires at correct thresholds
+```
 
-Development Phase 2 (Month 2):
-├─ Week 1: Validation working
-├─ Week 2: Risk management functional
-├─ Week 3: Analytics dashboard done
-├─ Week 4: Full integration tested
-└─ Goal: Can validate rigorously
-
-Development Phase 3 (Month 3):
-├─ Week 1-2: Paper trading live
-├─ Week 3-4: First strategy in paper
-└─ Goal: Paper trading running 2+ weeks
-
-Live Trading (Month 4):
-├─ Week 1: Live executor built
-├─ Week 2: Risk safeguards verified
-├─ Week 3-4: Live trading with $5k
-└─ Goal: Real money trading safely
-
-Scaling (Months 5-6):
-├─ Add 2-3 more strategies
-├─ Possibly add forex
-├─ Infrastructure optimization
-└─ Goal: Multi-strategy portfolio
+### Before Going Live
+```
+✓ 2+ weeks paper trading completed
+✓ Paper results within 20% of backtest Sharpe
+✓ Paper trade list reviewed manually (signals look sensible)
+✓ Zerodha GTT order placed and confirmed via Kite app
+✓ Emergency stop tested in paper mode
+✓ Starting capital: 1 lot only (Nifty ≈ ₹1.5L including buffer)
+✓ MIS squareoff at 15:15 IST confirmed in Grafana
 ```
 
 ---
 
-## ❓ FAQ
+## India Market Quick Facts
 
-**Q: Do I need to code?**
-A: Yes, for infrastructure setup. But NOT for building trading strategies (visual UI).
+```
+NSE EQ trading hours:    09:15–15:30 IST
+NSE F&O trading hours:   09:15–15:30 IST (15:25 MIS squareoff by Zerodha)
+MCX trading hours:       09:00–23:30 IST (evening session 17:00–23:30)
+MCX holiday-eve close:   17:00 IST
 
-**Q: What if I fail at trading?**
-A: The system is designed so failures are caught early (validation, paper trading). Worst case: lose $5-10k on first live strategy, learn from it, improve.
+Nifty lot size:          25 units
+BankNifty lot size:      15 units  
+Gold lot size (MCX):     100 grams (full), 1 gram (mini)
+Crude Oil lot size:      100 barrels
 
-**Q: Can I use different brokers?**
-A: Yes. Executor abstraction supports any broker with API.
+MIS squareoff:           15:15 IST (our system) / 15:20–15:25 (Zerodha auto)
+MCX forced exit:         23:00 IST (30 min before close)
+MCX delivery block:      3 days before expiry (HARD rule, no override)
 
-**Q: How much time per week once live?**
-A: 5-10 hours first month (daily monitoring). Then 1-2 hours/week (alerts + occasional review).
+Expiry day (NSE F&O):    Last Thursday of month (monthly), every Thursday (weekly index)
+Expiry day (MCX):        Varies by commodity — check instruments table
 
-**Q: What if market crashes?**
-A: Risk manager has emergency stops. Position sizes are capped. You control max loss.
-
-**Q: Is this guaranteed to be profitable?**
-A: No. Most traders fail. This system just increases odds by removing emotion and enforcing rigor.
-
-**Q: Can I trade 24/7?**
-A: Not with this setup (equities 6.5h/day, forex 24/5, crypto 24/7). Each asset class has different hours.
-
----
-
-## 📞 Need Help?
-
-### "I'm stuck on technical architecture"
-→ See [ARCHITECTURE.md](./ARCHITECTURE.md)
-
-### "I don't understand position sizing"
-→ See [LEARNING_ROADMAP.md](./LEARNING_ROADMAP.md) → Phase 3.2
-
-### "I need to build a strategy but don't know how"
-→ See [STRATEGY_GUIDE.md](./STRATEGY_GUIDE.md) → Step 1
-
-### "I don't know what to learn first"
-→ See [LEARNING_ROADMAP.md](./LEARNING_ROADMAP.md) → Phase 1
-
-### "I need a timeline"
-→ See [ROADMAP.md](./ROADMAP.md)
-
-### "I need GCP setup instructions"
-→ See [DEPLOYMENT.md](./DEPLOYMENT.md) (not yet created)
+India VIX:
+  < 15:  low volatility (trending, good for trend strategies)
+  15–20: normal
+  > 20:  high volatility (mean reversion riskier, breakouts work better)
+  > 30:  extreme — reduce all position sizes
+```
 
 ---
 
-## 🎓 Learning Resources
+## Key Limits (Zerodha)
 
-### Books (Start Here)
-1. *A Random Walk Down Wall Street* by Burton Malkiel
-2. *Market Wizards* by Jack Schwager
-3. *The Intelligent Investor* by Benjamin Graham
-4. *Fooled by Randomness* by Nassim Taleb
-5. *Trading for a Living* by Alexander Elder
+```
+Orders per day:              3,000 (all varieties combined)
+Order modifications per order: 25 maximum (then cancel + re-place)
+API rate limit:              200 orders/minute, 10 orders/second
+WebSocket subscriptions:     3,000 instruments maximum
+Kite Connect cost:           ₹500/month (waived if you trade that month)
 
-### Websites
-- Investopedia.com (free articles)
-- SSRN.com (academic papers)
-- Quantpedia.com (strategy summaries)
-- TradingView.com (free charts)
-- OANDA Academy (forex basics)
-
-### Communities
-- r/algotrading (Reddit)
-- Quantitative Finance Stack Exchange
-- Elitetrader.com
-- Trading forums (caution: survivorship bias)
+GTT orders: NOT counted in daily order limit (only entry/exit orders count)
+Order modifications: NOT counted in daily limit (only new orders count)
+```
 
 ---
 
-## 📝 Document Status
+## File Quick Reference
 
-| Document | Status | Priority |
-|----------|--------|----------|
-| README.md | ✓ Complete | Start here |
-| LEARNING_ROADMAP.md | ✓ Complete | Read before coding |
-| ARCHITECTURE.md | ✓ Complete | Reference |
-| PRODUCTS.md | ✓ Complete | Reference |
-| STRATEGY_GUIDE.md | ✓ Complete | Read before building |
-| ROADMAP.md | ✓ Complete | Follow sequentially |
-| DEPLOYMENT.md | ⏳ Not yet | Month 1 |
-| MONITORING.md | ⏳ Not yet | Month 2 |
-
----
-
-## ⏰ Recommended Reading Order
-
-**Week 1:**
-- [ ] README.md
-- [ ] LEARNING_ROADMAP.md (skim)
-
-**Weeks 2-13:**
-- [ ] LEARNING_ROADMAP.md (deep read, 10 hrs/week)
-- [ ] Start reading books
-
-**Week 14:**
-- [ ] ROADMAP.md
-- [ ] ARCHITECTURE.md
-- [ ] PRODUCTS.md
-
-**Week 15:**
-- [ ] STRATEGY_GUIDE.md
-- [ ] DEPLOYMENT.md
-
-**Month 4+:**
-- [ ] Ongoing reference as needed
-
----
-
-**You're ready to start! Begin with [README.md](../README.md) → [LEARNING_ROADMAP.md](./LEARNING_ROADMAP.md)**
+| If you need to know about... | Read this file |
+|---|---|
+| Full list of all docs | INDEX.md |
+| System architecture | ARCHITECTURE.md |
+| What each product does | PRODUCTS.md |
+| When to build what | ROADMAP.md |
+| GCP setup + costs | DEPLOYMENT.md |
+| All Pub/Sub message formats | PUBSUB_SCHEMA.md |
+| Go goroutine model + pipeline | CORE_ARCHITECTURE.md |
+| Segment-specific rules (equity/futures/MCX) | SEGMENT_MODULES.md |
+| Order flow + executor + paper trader | EXECUTION_SPEC.md |
+| Kill switch + position sizing + SPAN | RISK_ENGINE_SPEC.md |
+| R:R engine + event filter + heat check | RR_ENGINE_SPEC.md |
+| Composite scoring + Score Mode | SCORING_ENGINE.md |
+| Strategy JSON format + indicators | STRATEGY_SCHEMA.md |
+| Strategy promotion + versioning | STRATEGY_LIFECYCLE.md |
+| How to build a strategy | STRATEGY_GUIDE.md |
+| Trailing stop types + GTT limits | TRAILING_STOP_SPEC.md |
+| Trade data storage + degradation | TRADE_INTELLIGENCE_SPEC.md |
+| Grafana dashboards + alerts | MONITORING.md |
+| NSE/MCX market rules | INDIA_MARKETS_SPEC.md |
+| TimescaleDB schema | DATA_SCHEMA_INDIA.md |
+| TrueData WebSocket | TRUEDATA_SPEC.md |
+| Futures roll detection | CONTINUOUS_CONTRACTS_SPEC.md |
+| Zerodha API details | Zerodha_Spec.md |
+| Capital allocation algorithm | ALLOCATOR_SPEC.md |
+| Options (Phase 2) | OPTIONS.md |
