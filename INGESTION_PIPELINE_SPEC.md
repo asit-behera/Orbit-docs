@@ -299,3 +299,170 @@ The ingestion service emits Prometheus metrics that are visible in Grafana.
 *See TRUEDATA_SPEC.md for WebSocket connection details.*
 *See DATA_SCHEMA_INDIA.md for database table definitions.*
 *See CONTINUOUS_CONTRACTS_SPEC.md for roll detection and adjustment.*
+
+---
+
+## 10. NSE PCR Fetcher
+
+A lightweight polling sub-service that runs inside the ingestion service process. It fetches PCR data from NSE's option chain API every 5 minutes during market hours and writes snapshots to `pcr_snapshots`.
+
+This is separate from the TrueData WebSocket pipeline — it uses HTTP polling against NSE, not a streaming connection.
+
+### 10.1 Why a Separate Sub-service
+
+PCR data comes from NSE directly, not TrueData. NSE does not offer a WebSocket feed for option chain data. Polling is the only available mechanism. Running it inside the ingestion service process avoids deploying an additional VM.
+
+### 10.2 NSE Option Chain API
+
+**Endpoint:** `https://www.nseindia.com/api/option-chain-indices?symbol={SYMBOL}`
+
+**Symbols:** As stored in `pcr_tracked_symbols.nse_api_symbol` (e.g., `NIFTY`, `BANKNIFTY`).
+
+**Authentication:** NSE requires a valid browser-like session. The API rejects requests without proper headers and a session cookie obtained by first visiting the NSE homepage.
+
+**Session initialisation sequence:**
+```
+1. GET https://www.nseindia.com/
+   Headers: User-Agent, Accept, Accept-Language (standard browser headers)
+   → Obtain session cookies (nsit, nseappid, ak_bmsc)
+
+2. GET https://www.nseindia.com/option-chain
+   → Refresh cookies (some cookies are tied to this page visit)
+
+3. Now use the option chain API endpoint with these cookies
+   → Cookies valid for approximately 3–5 minutes before needing refresh
+```
+
+**Session refresh strategy:** Refresh the NSE session every 3 minutes proactively (before the 5-minute poll cycle expires the cookies). If an API call returns HTTP 401 or 403, immediately re-initialise the session and retry once before marking the poll as failed.
+
+**Rate limiting:** NSE does not publish rate limits. Empirically, polling every 5 minutes per underlying with proper session handling is safe. Do not poll faster than every 3 minutes. Do not run multiple concurrent sessions from the same IP.
+
+### 10.3 PCR Computation
+
+The NSE response contains a list of strike-wise data. PCR is computed from the totals row:
+
+```python
+def compute_pcr(option_chain_response: dict) -> tuple[float, int, int, int]:
+    """
+    Returns: (pcr, total_put_oi, total_call_oi, strikes_counted)
+    Uses the 'totals' row if present; falls back to summing all strikes.
+    """
+    data = option_chain_response["records"]["data"]
+    totals = option_chain_response["records"].get("totals")
+
+    if totals:
+        # Use exchange-provided totals — most accurate
+        total_put_oi  = totals["PE"]["totOI"]
+        total_call_oi = totals["CE"]["totOI"]
+        strikes_counted = len(data)
+    else:
+        # Fallback: sum across all strike rows
+        total_put_oi  = sum(row["PE"]["openInterest"] for row in data if "PE" in row)
+        total_call_oi = sum(row["CE"]["openInterest"] for row in data if "CE" in row)
+        strikes_counted = len(data)
+
+    if total_call_oi == 0:
+        raise ValueError("total_call_oi is zero — invalid option chain response")
+
+    pcr = round(total_put_oi / total_call_oi, 4)
+    return pcr, total_put_oi, total_call_oi, strikes_counted
+```
+
+**Why use the totals row:** NSE provides a pre-computed totals row that sums across all strikes and all expiries. Using it is more accurate than summing rows manually (avoids floating-point accumulation errors on large OI numbers) and is faster.
+
+### 10.4 Polling Loop
+
+```python
+async def pcr_fetch_loop():
+    """
+    Runs every 5 minutes during NSE F&O market hours (09:15 – 15:30 IST).
+    Each iteration fetches PCR for all active underlyings in pcr_tracked_symbols.
+    """
+    while market_is_open():
+        symbols = db.query("SELECT nse_api_symbol, symbol FROM pcr_tracked_symbols WHERE is_active = true")
+
+        for sym in symbols:
+            try:
+                raw_response = nse_session.get(option_chain_url(sym.nse_api_symbol))
+                response_hash = sha256(raw_response)
+
+                # Stale detection: same hash 3 times in a row = NSE is returning cached data
+                if is_stale(sym.symbol, response_hash, consecutive_threshold=3):
+                    log.warning("PCR_DATA_STALE", symbol=sym.symbol)
+                    db.insert_pcr_snapshot(sym.symbol, is_stale=True, ...)
+                    continue
+
+                pcr, put_oi, call_oi, strikes = compute_pcr(parse(raw_response))
+
+                db.insert_pcr_snapshot(
+                    time=now(),
+                    symbol=sym.symbol,
+                    pcr=pcr,
+                    total_put_oi=put_oi,
+                    total_call_oi=call_oi,
+                    strikes_counted=strikes,
+                    raw_response_hash=response_hash,
+                    is_stale=False,
+                    fetch_latency_ms=elapsed_ms,
+                    source='nse_option_chain'
+                )
+
+            except NSESessionExpired:
+                nse_session.reinitialise()
+                # Retry this symbol once
+                ...
+            except Exception as e:
+                log.error("PCR_FETCH_FAILED", symbol=sym.symbol, error=str(e))
+                # Do not raise — one symbol failure should not block others
+
+        await asyncio.sleep(300)  # 5 minutes
+```
+
+### 10.5 Writing to open_interest.pcr
+
+At each bar close, the bar aggregation job (which already writes the `ohlcv_1min` row) also updates `open_interest.pcr` with the most recent non-stale PCR snapshot for the corresponding index symbol.
+
+```python
+def get_current_pcr(symbol: str) -> float | None:
+    """
+    Returns the most recent PCR value for an index symbol.
+    Returns None if no snapshot exists or latest is stale.
+    Called at bar close by the bar aggregation job.
+    """
+    row = db.query("""
+        SELECT pcr, time, is_stale
+        FROM pcr_snapshots
+        WHERE symbol = %s AND is_stale = false
+        ORDER BY time DESC
+        LIMIT 1
+    """, symbol)
+
+    if not row:
+        return None
+
+    age_minutes = (now() - row.time).total_seconds() / 60
+    if age_minutes > 15:
+        log.warning("PCR_SNAPSHOT_TOO_OLD", symbol=symbol, age_minutes=age_minutes)
+        return None
+
+    return row.pcr
+```
+
+The `None` return propagates to the strategy evaluator, which treats a missing PCR as a failed condition (entry blocked, logged as `PCR_DATA_UNAVAILABLE`).
+
+### 10.6 Monitoring
+
+| Metric | Alert Threshold |
+|---|---|
+| `pcr_fetch_success` per underlying | Alert if 0 successful fetches in 15 minutes during market hours |
+| `pcr_fetch_latency_ms` | Alert if > 5000ms (NSE is slow or session expired) |
+| `pcr_stale_count` per underlying | Alert if 3 consecutive stale responses |
+| `pcr_session_reinit_count` | Alert if > 5 reinits in 1 hour (NSE blocking suspected) |
+
+### 10.7 Startup and Shutdown
+
+**Startup:** PCR fetcher initialises its NSE session during the ingestion service pre-market startup (08:55 IST), immediately after the TrueData WebSocket is established. First PCR fetch runs at 09:15 IST when F&O market opens.
+
+**Shutdown:** PCR fetch loop exits when `market_is_open()` returns false (after 15:30 IST). One final fetch is made at 15:30 IST to capture end-of-day PCR before the F&O market closes. This EOD PCR value is the most widely referenced by analysts and is stored with a `source = 'nse_option_chain_eod'` tag.
+
+**On MCX-only days (NSE holiday):** PCR fetch loop does not start. MCX trades but has no index options — PCR is an NSE F&O concept only.

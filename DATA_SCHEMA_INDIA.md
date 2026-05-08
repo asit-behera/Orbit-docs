@@ -44,6 +44,8 @@ TimescaleDB automatically partitions time-series tables into time-based chunks (
 | `market_holidays` | Regular | Per-exchange holiday list |
 | `data_gaps` | Regular | Log of detected gaps and outages |
 | `india_vix` | Regular | India VIX daily values |
+| `pcr_tracked_symbols` | Regular | Configurable list of index underlyings for PCR tracking |
+| `pcr_snapshots` | Hypertable | PCR snapshots fetched from NSE every 5 minutes |
 
 ---
 
@@ -246,6 +248,55 @@ A log of every detected gap in our data store. Written by the data quality check
 
 ---
 
+### 3.9 pcr_tracked_symbols
+
+Configuration table defining which index underlyings to fetch PCR data for. Managed via the React UI — no code changes needed to add or remove underlyings.
+
+| Field | Purpose |
+|---|---|
+| symbol | Index underlying symbol (e.g., NIFTY, BANKNIFTY) |
+| display_name | Human-readable name for UI (e.g., "Nifty 50") |
+| nse_api_symbol | Symbol string as used in NSE option chain API (e.g., NIFTY, BANKNIFTY) |
+| is_active | False = stop fetching PCR for this underlying (but keep historical data) |
+| added_at | When this symbol was added to tracking |
+| added_by | User who added it (audit trail) |
+
+**Default rows on first deploy:** NIFTY, BANKNIFTY.
+
+**Why a separate config table instead of hardcoding:** PCR tracking scope will expand as the system grows (FINNIFTY, MIDCPNIFTY, sector indices if NSE adds them). A config table means the fetcher service reads its target list at startup — no redeployment needed to add an underlying.
+
+---
+
+### 3.10 pcr_snapshots
+
+Every PCR reading fetched from NSE is stored here. This is the raw store — the `open_interest.pcr` field is populated from the latest snapshot in this table at bar close.
+
+| Field | Purpose |
+|---|---|
+| time | Timestamp when this snapshot was fetched — **partition key** |
+| symbol | Index underlying (e.g., NIFTY, BANKNIFTY) |
+| pcr | Computed PCR value (total put OI / total call OI) |
+| total_put_oi | Sum of put open interest across all strikes and all expiries |
+| total_call_oi | Sum of call open interest across all strikes and all expiries |
+| total_oi | total_put_oi + total_call_oi (total options market activity) |
+| strikes_counted | Number of strikes included in computation (data quality indicator) |
+| fetch_latency_ms | Time taken to fetch and parse NSE response (monitoring) |
+| is_stale | True if this row was flagged as suspect (NSE returned unchanged data 3× in a row) |
+| raw_response_hash | SHA-256 hash of NSE API response — detects when NSE returns identical data across polls |
+| source | Always 'nse_option_chain' — reserved for future alternate sources |
+
+**Why store total_put_oi and total_call_oi separately:** PCR alone loses information. Knowing that PCR = 1.2 because there are 10M puts and 8.3M calls vs 100K puts and 83K calls is meaningful — low total OI makes the ratio less reliable. Future enhancements can weight PCR signals by total OI.
+
+**Why store raw_response_hash:** NSE sometimes returns a cached/stale response without indicating it. If the hash is identical across 3 consecutive polls, the snapshot is flagged `is_stale = true` and a monitoring alert is raised.
+
+**Hypertable configuration:**
+- Chunk interval: 1 day
+- Compression: After 30 days
+- Retention in hot store: 1 year
+- Primary index: (time, symbol)
+
+---
+
 ## 4. Storage Estimates
 
 These are approximate projections to inform infrastructure sizing.
@@ -256,6 +307,7 @@ These are approximate projections to inform infrastructure sizing.
 | ohlcv_1min | ~50 MB/day | ~18 GB | ~2 GB |
 | ohlcv_daily | ~5 MB/day | ~2 GB | ~500 MB |
 | open_interest | ~200 MB/day | ~70 GB | ~5 GB |
+| pcr_snapshots (4 underlyings × 5min) | ~1 MB/day | ~365 MB | ~50 MB |
 
 **Total compressed hot store (1 year):** ~40 GB
 **Total uncompressed:** ~600 GB
@@ -274,6 +326,7 @@ Given these numbers, a 100 GB Cloud SQL instance is sufficient for 2 years of ho
 | ohlcv_daily | Forever (low volume) | Never needed |
 | open_interest (intraday) | 90 days | Beyond 90 days |
 | open_interest (EOD) | Forever | Never needed |
+| pcr_snapshots | 1 year | Beyond 1 year |
 
 Archival is run by a Cloud Scheduler job at 02:00 IST, after markets are closed and TimescaleDB compression has run.
 

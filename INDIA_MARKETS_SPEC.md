@@ -159,7 +159,37 @@ India VIX data is available from NSE and through TrueData.
 Basis = Futures Price − Spot Price. In normal conditions (contango), futures trade at a premium to spot due to cost of carry. When basis narrows sharply or goes negative (backwardation), it signals strong directional conviction. This is a useful indicator for index futures strategies.
 
 ### 5.3 Put-Call Ratio (PCR)
-The ratio of total open interest in put options to call options. PCR > 1.2 indicates bearish sentiment; PCR < 0.8 indicates bullish extremes that often precede reversals. Useful as a contrarian filter. PCR data comes from NSE F&O option chain data.
+
+PCR = Total Put Open Interest / Total Call Open Interest across all strikes and all expiries for a given index.
+
+**What it measures:** Aggregate market sentiment. A high PCR means more participants are buying puts (protection/bearish bets). A low PCR means more are buying calls (bullish bets).
+
+**Thresholds:**
+
+| PCR Value | Interpretation | Strategy Implication |
+|---|---|---|
+| > 1.3 | Extreme fear / heavy put buying | Contrarian bullish — market often reverses up |
+| 1.0 – 1.3 | Elevated caution | Mild bearish bias |
+| 0.8 – 1.0 | Neutral | No directional bias |
+| < 0.8 | Excessive optimism / call buying | Contrarian bearish — market often reverses down |
+
+**Scope:** PCR is meaningful only for **index underlyings** (NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY). Single-stock PCR exists but is unreliable due to thin options liquidity and distortion from covered call writing and institutional hedging.
+
+**Expiry scope:** We compute PCR using **all expiries combined** (near month + far month + weekly). This matches the "Total" row on NSE's official option chain page and is the industry standard. Near-month-only PCR underrepresents participation from weekly options, which have grown significantly in volume.
+
+**Data source:** NSE option chain API (`nseindia.com/api/option-chain-indices`). This is an official exchange data source, not TrueData. PCR cannot be reliably computed from TrueData's tick feed because individual option ticks across hundreds of strikes arrive at different timestamps — point-in-time consistency cannot be guaranteed.
+
+**Polling frequency:** Every 5 minutes during market hours. NSE refreshes the option chain approximately every 3–5 minutes. Polling faster risks IP-level rate limiting from NSE with no benefit.
+
+**Tracked underlyings:** Configurable via `pcr_tracked_symbols` table. Default: NIFTY, BANKNIFTY. Additional indices (FINNIFTY, MIDCPNIFTY) can be added without code changes.
+
+**Storage:** Snapshots are stored in the `pcr_snapshots` table. The `open_interest` table's `pcr` field is populated from the latest snapshot at bar close for use by strategy signal evaluation.
+
+**Usage in the system:**
+1. **Strategy Builder condition** — `PCR` indicator available for index future strategies. Example: `PCR(NIFTY) > 1.2` as a contrarian entry filter.
+2. **Regime classification** — PCR feeds the Allocator's regime model alongside India VIX and FII/DII flows to characterise market sentiment (fear / neutral / greed).
+
+**Staleness handling:** If NSE API is unreachable and the last PCR snapshot is older than 15 minutes, any strategy condition referencing PCR evaluates to `false` (blocks entry, not a hard rejection). This is logged as `PCR_DATA_STALE`. The system never uses an outdated PCR value silently.
 
 ### 5.4 FII/DII Activity
 Foreign Institutional Investors (FII) and Domestic Institutional Investors (DII) publish their net buy/sell data daily. Sustained FII selling is a reliable bearish indicator for Indian markets. We do not trade this signal directly but use it for regime classification.

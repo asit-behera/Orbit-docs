@@ -396,6 +396,7 @@ All indicators available in the condition builder.
 | `OI` | — | Open interest (F&O and MCX only) |
 | `OI_CHANGE` | `period` | OI change over N bars |
 | `BASIS` | — | Futures - Spot (F&O only, requires spot symbol config) |
+| `PCR` | `underlying`: NIFTY / BANKNIFTY / FINNIFTY / MIDCPNIFTY | Put-Call Ratio for the specified index. Sourced from NSE option chain (5-minute snapshots). **Only valid when strategy instrument is an index future or when used as a market-wide filter.** Returns `null` if latest snapshot is stale (>15 min old) — condition evaluates to `false`. Available underlyings are those active in `pcr_tracked_symbols` table. |
 
 ### Time
 
