@@ -8,17 +8,17 @@ See CORE_ARCHITECTURE.md for how Core generates OrderIntent.
 See RISK_ENGINE_SPEC.md for risk rules that gate orders.
 See Zerodha_Spec.md for Zerodha API integration details.
 
----
+-----
 
 ## Design Principles
 
-1. **Executor is a separate binary from Core.** Core emits intent. Executor acts on it. Neither knows the other's internals.
-2. **Paper and Live executors are interchangeable.** Same Order payload. Same response contract. Switch via config, not code.
-3. **Every rejection is captured.** Whether a trade dies at signal generation or at the broker, the full context is stored. No silent drops.
-4. **Stop loss is confirmed before entry is considered placed.** If stop placement fails, the entry is cancelled immediately.
-5. **Executor never generates signals.** It only executes what Core tells it to. All trading logic lives in Core.
+1. **Executor is a separate binary from Core.** Core emits intent. Executor acts on it. Neither knows the other’s internals.
+1. **Paper and Live executors are interchangeable.** Same Order payload. Same response contract. Switch via config, not code.
+1. **Every rejection is captured.** Whether a trade dies at signal generation or at the broker, the full context is stored. No silent drops.
+1. **Stop loss is confirmed before entry is considered placed.** If stop placement fails, the entry is cancelled immediately.
+1. **Executor never generates signals.** It only executes what Core tells it to. All trading logic lives in Core.
 
----
+-----
 
 ## System Overview
 
@@ -42,7 +42,7 @@ events.order_results (Pub/Sub)
   └─→ DB Writer (persists execution record)
 ```
 
----
+-----
 
 ## Rejection Pipeline — All 6 Stages
 
@@ -113,7 +113,7 @@ Stage 6 — Broker Rejection:
   ORDER_TIMEOUT                Order not filled within timeout window
 ```
 
----
+-----
 
 ## Order States
 
@@ -131,7 +131,7 @@ CANCELLED   Order cancelled by system (timeout, emergency stop)
 TIMEOUT     No fill within timeout window, order cancelled
 ```
 
----
+-----
 
 ## Executor Consumer Binary
 
@@ -269,7 +269,7 @@ Partial fill received (filled_qty < requested_qty):
           Use Option B for limit orders (price is the priority, not immediacy)
 ```
 
----
+-----
 
 ## Pre-Execution Checks Detail (Stages 1–4, Inside Core)
 
@@ -365,7 +365,7 @@ Check order (all checks are in-memory against Redis-loaded risk state):
   All passed → publish to events.orders → done
 ```
 
----
+-----
 
 ## Post-Execution Metrics
 
@@ -433,12 +433,12 @@ Rolling average per strategy:
     → Review: market conditions, time of day, lot sizes
 ```
 
----
+-----
 
 ## Paper Trader
 
 Implements the Executor interface. Runs inside the Executor Consumer binary.
-Selected when execution_mode = "paper" on the order.
+Selected when execution_mode = “paper” on the order.
 
 ### Fill Simulation
 
@@ -535,7 +535,7 @@ paper_trader:
   latency_jitter_ms: 120        # Random jitter up to +120ms
 ```
 
----
+-----
 
 ## Stop Loss Placement Protocol
 
@@ -571,11 +571,12 @@ Rule: Stop loss price can only move toward current price (tighten).
       This rule is enforced in code — no API endpoint allows widening a stop.
 ```
 
----
+-----
 
 ## Emergency Stop
 
 Triggered by:
+
 - Kill switch Level 3 (portfolio drawdown > 15%)
 - Kill switch Level 4 (manual trigger from dashboard)
 - API: `POST /control/emergency-shutdown`
@@ -601,9 +602,85 @@ Note: Emergency stop fires market orders regardless of price.
       Capital preservation > execution quality during emergency.
 ```
 
----
+-----
 
-## Rejected Trade Data Model
+## Broker Connection Handling
+
+### Zerodha Session Disconnect (Mid-Trade)
+
+A Zerodha API session can drop while positions are open. This is the most
+dangerous failure mode — open positions with no monitoring.
+
+```
+Detection:
+  Executor polls Zerodha GET /orders every 500ms during active positions.
+  If 3 consecutive poll failures: session considered lost.
+
+  Also: Kite WebSocket (order updates) disconnects trigger immediate detection.
+
+Response sequence:
+  1. Log: BROKER_SESSION_LOST
+  2. Alert: CRITICAL — immediate notification
+  3. Attempt re-authentication:
+     a. Refresh Zerodha access token (from Cloud Secret Manager)
+     b. Retry connection — up to 3 attempts, 10 second backoff each
+  4. If reconnected within 2 minutes:
+     a. Fetch current order book from Zerodha GET /orders
+     b. Reconcile with Redis pending_orders state
+     c. For any position with no GTT stop found at Zerodha:
+        → Re-submit stop loss order immediately
+        → Log: STOP_ORDER_RESUBMITTED_AFTER_RECONNECT
+     d. Resume normal operation, log BROKER_SESSION_RESTORED
+  5. If reconnected after 2+ minutes:
+     a. Fetch all open positions from Zerodha
+     b. Compare against Redis state:positions
+     c. Any discrepancy → alert operator, do NOT auto-reconcile
+        (Price may have moved significantly — human decision required)
+  6. If cannot reconnect after 3 attempts (30+ seconds):
+     a. Cannot place market close orders — broker is unreachable
+     b. Log: BROKER_UNREACHABLE
+     c. Alert: CRITICAL with all open position details
+     d. Operator must act manually via Zerodha console
+     e. System enters HALTED state — no new orders until session restored
+
+Hard rule: Never assume a position is safe without GTT stop confirmation at Zerodha.
+           If you cannot verify the stop exists: treat it as unprotected.
+```
+
+### GTT Stop Order Monitoring
+
+GTT orders persist at Zerodha independently. They can disappear due to:
+
+- Zerodha system issues
+- Manual cancellation (accidental)
+- Symbol corporate actions
+
+```
+GTT Watchdog (runs every 60 seconds, part of Executor):
+
+  For each open position in Redis state:positions:
+    1. Fetch associated GTT order ID (stored in Redis: positions:{id}:gtt_id)
+    2. Call Zerodha GET /gtt/{gtt_id}
+    3. If GTT status = ACTIVE: continue (normal)
+    4. If GTT status = TRIGGERED: position was stopped out → process fill
+    5. If GTT not found or status = CANCELLED:
+       → Log: GTT_ORDER_MISSING {symbol, strategy_id, gtt_id}
+       → Immediately re-submit stop loss order at original stop price
+       → If re-submission fails: Alert CRITICAL, mark position as UNPROTECTED
+       → Log: STOP_ORDER_RESUBMITTED or STOP_RESUBMISSION_FAILED
+
+  If STOP_RESUBMISSION_FAILED:
+    → Alert operator with position details
+    → Executor does NOT auto-close position (price may be fine, don't panic sell)
+    → Operator must decide: close manually or wait for stop to be re-submitted
+    → After 5 minutes with no GTT: auto-close at market, log FORCED_CLOSE_UNPROTECTED
+
+Paper Trader:
+  GTT monitoring not needed — pendingStopOrders map is in-process.
+  Paper stops are checked on every tick — they cannot disappear.
+```
+
+-----
 
 All rejections (all 6 stages) are published to `events.rejections` and persisted by DB Writer.
 Stored in PostgreSQL `rejected_trades` table with full context.
@@ -667,7 +744,7 @@ Use cases:
   → SELECT AVG(max_favourable_excursion) WHERE rejection_stage = 2
 ```
 
----
+-----
 
 ## Execution Record (Completed Trades)
 
@@ -704,7 +781,7 @@ Columns:
   hold_minutes          INTEGER
 ```
 
----
+-----
 
 ## API Endpoints (Executor Consumer)
 
@@ -730,6 +807,6 @@ Emergency:
   POST /emergency/stop-all       → close all open positions at market
 ```
 
----
+-----
 
 *Next: RISK_ENGINE_SPEC.md — kill switch, drawdown rules, SPAN margin, position sizing.*

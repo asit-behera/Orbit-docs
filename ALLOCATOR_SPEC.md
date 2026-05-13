@@ -84,14 +84,41 @@ Data Manager (OHLCV + Market Calendar)
   Target Weight    Risk Monitor reports
   Vector (Redis)   gross exposure back
         ↓
-  Risk Monitor (reads weights + enforces bands)
+  Core Binary reads weights at 09:15 IST session open
         ↓
-  Live Executor (stop loss validation on every order)
+  Scoring Engine uses Allocator Weight as Component 3 (W3=0.20)
+  in the 4-component Composite Score for strategy selection
+        ↓
+  Risk Monitor enforces allocation bands on new entries
+        ↓
+  Live Executor (stop loss on every order — see EXECUTION_SPEC.md)
 ```
 
 Runs once per day at 18:30 IST (after NSE market close, before MCX evening session ends).
 Writes output to Redis so Core reads on next session open.
 Skips automatically on NSE/MCX holidays and circuit-breaker halts.
+
+**Scoring Engine integration (see SCORING_ENGINE.md — Component 3):**
+The Allocator weight feeds directly into the Composite Score that determines
+which strategy trades when multiple strategies signal on the same bar:
+
+```
+Composite Score = (Signal Strength × 0.40) + (Win Rate × 0.30)
+                + (Allocator Weight × 0.20) + (Regime Match × 0.10)
+
+Allocator Weight normalisation (done by Scoring Engine, not Allocator):
+  normalised = strategy_weight / max_weight_across_active_strategies
+
+  Strategy A: weight 0.30, max = 0.40 → normalised = 0.75
+  Strategy B: weight 0.40, max = 0.40 → normalised = 1.00
+
+Hard rule: If allocator_weight = 0 → strategy is SUPPRESSED.
+  No signal evaluation, no composite score, excluded entirely.
+
+Fallback: If Allocator weights unavailable in Redis:
+  Scoring Engine uses equal weight (1/n strategies) + logs WARNING.
+  Trading is never blocked due to Allocator unavailability.
+```
 
 -----
 
@@ -108,22 +135,19 @@ builds on.
 Rule: Every trade must have a hard stop loss confirmed by the broker
       before the entry order is considered placed.
 
-Enforcement:
-  1. Risk Monitor calculates stop price
-  2. Live Executor submits entry order + stop order simultaneously
-     (bracket order where broker supports it, or OCO)
-  3. If stop order confirmation is not received within 5 seconds:
-     → Cancel the entry order immediately
-     → Log: STOP_PLACEMENT_FAILED
-     → Alert user
-     → Do NOT retry automatically
+Full stop loss placement protocol: see EXECUTION_SPEC.md → "Stop Loss Placement Protocol"
 
-Stop price formula:
-  stop_price = entry_price - (risk_amount / position_size)
+Summary:
+  1. Risk Monitor calculates stop price (ATR-based or fixed %, per strategy config)
+  2. Executor submits entry + GTT stop order simultaneously after fill
+  3. If stop confirmation not received within 5 seconds:
+     → Cancel entry position at market immediately
+     → Do NOT hold a position without a confirmed stop — ever
+  4. Stop loss can only be tightened after placement, never widened
+  5. GTT Watchdog checks stop exists every 60 seconds — re-submits if missing
 
-  Where:
-    risk_amount = 2% * account_equity          (see 4.2)
-    position_size = calculated by Risk Monitor  (see 4.3)
+See EXECUTION_SPEC.md for: timeout handling, GTT monitoring, broker disconnect,
+  re-submission protocol, and stop loss enforcement during emergency stops.
 ```
 
 ### 4.2 Per-Trade Capital Risk (The 2% Rule)

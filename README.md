@@ -12,7 +12,7 @@ A professional-grade, self-hosted algorithmic trading system for Indian markets.
 
 ## Quick Start
 
-**Cost:** ~$25-50/month on GCP  
+**Cost:** ~₹7,200/month on GCP (infra only — see DEPLOYMENT.md for breakdown)  
 **Deployment:** Single GCP project (can clone for friends/family)  
 **No coding required to:** Build strategies, backtest, deploy  
 **Time to first trade:** ~6 months (with learning phase)
@@ -22,6 +22,7 @@ A professional-grade, self-hosted algorithmic trading system for Indian markets.
 See [ARCHITECTURE.md](./docs/ARCHITECTURE.md) for detailed technical design.
 
 **High-level:**
+
 ```
 Visual Strategy Builder
          ↓
@@ -32,20 +33,22 @@ Paper Trading → Risk Monitor
 Live Executor ← Analytics (Grafana)
 ```
 
-All services deployed on GCP Cloud Run with PostgreSQL + Grafana monitoring.
+Always-on binaries (tick receiver, core, executor, db-writer) run on a Compute Engine VM.
+On-demand services (backtesting, validation, allocator) run on Cloud Run.
+All backed by PostgreSQL + TimescaleDB + Redis + Grafana monitoring.
 
 ## Products Overview
 
-| Product | Purpose | User |
-|---------|---------|------|
-| **Data Manager** | Ingest & validate market data | System (automatic) |
-| **Strategy Builder** | Create trading logic visually | You (drag-drop UI) |
-| **Backtesting Engine** | Test strategies on historical data | You (click "backtest") |
-| **Validation Suite** | Separate signal from luck | System (automated) |
-| **Risk Monitor** | Position sizing & drawdown limits | System (real-time) |
-| **Analytics Dashboard** | P&L tracking, charts, alerts | You (24/7 view) |
-| **Paper Trading** | Simulate live trading risk-free | You (1-4 weeks testing) |
-| **Live Executor** | Execute real trades | System (with safeguards) |
+|Product                |Purpose                           |User                    |
+|-----------------------|----------------------------------|------------------------|
+|**Data Manager**       |Ingest & validate market data     |System (automatic)      |
+|**Strategy Builder**   |Create trading logic visually     |You (drag-drop UI)      |
+|**Backtesting Engine** |Test strategies on historical data|You (click “backtest”)  |
+|**Validation Suite**   |Separate signal from luck         |System (automated)      |
+|**Risk Monitor**       |Position sizing & drawdown limits |System (real-time)      |
+|**Analytics Dashboard**|P&L tracking, charts, alerts      |You (24/7 view)         |
+|**Paper Trading**      |Simulate live trading risk-free   |You (1-4 weeks testing) |
+|**Live Executor**      |Execute real trades               |System (with safeguards)|
 
 See [PRODUCTS.md](./docs/PRODUCTS.md) for detailed product specs.
 
@@ -89,18 +92,18 @@ docs/
 ## Key Principles
 
 1. **Simpler than you think.** No coding needed for trading logic.
-2. **More rigorous than you expect.** Validation before live trading.
-3. **Your data, your rules.** Self-hosted, fully customizable.
-4. **Scalable from day 1.** Start with 1 strategy, grow to 100.
-5. **India-first.** Built for NSE and MCX market structure — lot sizes, expiry cycles, SPAN margin.
+1. **More rigorous than you expect.** Validation before live trading.
+1. **Your data, your rules.** Self-hosted, fully customizable.
+1. **Scalable from day 1.** Start with 1 strategy, grow to 100.
+1. **India-first.** Built for NSE and MCX market structure — lot sizes, expiry cycles, SPAN margin.
 
 ## Asset Support
 
-| Segment | Exchange | Data Source | Executor |
-|---------|----------|-------------|----------|
-| Equity (Cash) | NSE EQ | TrueData Velocity Ultima | Zerodha Kite API |
-| Futures | NSE F&O | TrueData Velocity Ultima | Zerodha Kite API |
-| Commodity Futures | MCX | TrueData Velocity Ultima | Zerodha Kite API |
+|Segment          |Exchange|Data Source             |Executor        |
+|-----------------|--------|------------------------|----------------|
+|Equity (Cash)    |NSE EQ  |TrueData Velocity Ultima|Zerodha Kite API|
+|Futures          |NSE F&O |TrueData Velocity Ultima|Zerodha Kite API|
+|Commodity Futures|MCX     |TrueData Velocity Ultima|Zerodha Kite API|
 
 **Out of scope (Phase 1):** Options, Forex, Crypto.  
 **Options:** Deferred to Phase 2 — see [OPTIONS.md](./OPTIONS.md) for future design.
@@ -108,12 +111,12 @@ docs/
 ## Next Steps
 
 1. Read [LEARNING_ROADMAP.md](./docs/LEARNING_ROADMAP.md) to understand markets
-2. Read [ARCHITECTURE.md](./docs/ARCHITECTURE.md) to understand the system
-3. Follow [ROADMAP.md](./docs/ROADMAP.md) for implementation phases
-4. Deploy on GCP following [DEPLOYMENT.md](./docs/DEPLOYMENT.md)
-5. Build first strategy using [STRATEGY_GUIDE.md](./docs/STRATEGY_GUIDE.md)
+1. Read [ARCHITECTURE.md](./docs/ARCHITECTURE.md) to understand the system
+1. Follow [ROADMAP.md](./docs/ROADMAP.md) for implementation phases
+1. Deploy on GCP following [DEPLOYMENT.md](./docs/DEPLOYMENT.md)
+1. Build first strategy using [STRATEGY_GUIDE.md](./docs/STRATEGY_GUIDE.md)
 
----
+-----
 
 **Last Updated:** May 2026  
 **Status:** Design Phase (ready to implement)  
