@@ -1,12 +1,15 @@
 # Adaptive Capital Allocator — Full System Specification
 
-# Version 2.0 — All 25 Gaps Resolved
+# Version 3.0 — India Market Corrections
 
 **Status:** Design Phase — Ready to Implement
 **Scope:** Architecture + Math + API + DB Schema + Integration
 **Approach:** Rule-based, no ML, daily EOD rebalancing
-**Asset Class:** Equities, Futures (NSE F&O), Commodity (MCX)
-**Changelog from V1:** All 25 identified gaps resolved (see Section 15)
+**Asset Class:** NSE Equity, NSE F&O, MCX Commodity
+**Markets:** India only — NSE + MCX via Zerodha + TrueData
+**Language:** Go (consistent with full system stack)
+**Changelog from V2:** India-specific corrections — timezone, settlement, currency,
+language, market calendar, lot sizing, India VIX regime signal, MIS squareoff
 
 -----
 
@@ -86,9 +89,9 @@ Data Manager (OHLCV + Market Calendar)
   Live Executor (stop loss validation on every order)
 ```
 
-Runs once per day at 6:30 PM ET (after market close).
-Writes output to Redis so Risk Monitor reads in real-time.
-Skips automatically on market holidays and early closes.
+Runs once per day at 18:30 IST (after NSE market close, before MCX evening session ends).
+Writes output to Redis so Core reads on next session open.
+Skips automatically on NSE/MCX holidays and circuit-breaker halts.
 
 -----
 
@@ -129,10 +132,10 @@ Stop price formula:
 Max risk per trade = 2% of current account equity
 
 Example:
-  Account equity: $100,000
-  Max risk per trade: $2,000
+  Account equity: ₹10,00,000 (10 lakhs)
+  Max risk per trade: ₹20,000
 
-  This means: 50 consecutive full losses = $100,000 lost
+  This means: 50 consecutive full losses = ₹10,00,000 lost
   With a validated strategy (Sharpe > 1.0, win rate > 50%),
   this scenario is statistically near-impossible.
 
@@ -144,35 +147,83 @@ Risk tightening rules (automatic):
     → Resets automatically after 10 trades or 1 profitable trade
   - Portfolio drawdown > 8%:
     → Max risk reduced to 1% across all strategies
+  - India VIX > 30 (extreme volatility):
+    → Max risk reduced to 1% across all strategies
 ```
 
-### 4.3 Position Size Calculation
+### 4.3 Position Size Calculation — NSE Equity
 
 ```
-position_size = risk_amount / (entry_price - stop_price)
+For NSE Equity (cash shares, no lot constraint):
 
-Example:
-  Account: $100,000
-  Risk amount (2%): $2,000
-  Entry price: $150.00
-  Stop price: $148.50  (1% below entry)
-  
-  position_size = $2,000 / $1.50 = 1,333 shares
+  position_size = risk_amount / (entry_price - stop_price)
 
-  Resulting position value: 1,333 * $150 = $199,950
-  This is ~200% of account — EXCEEDS max position limit.
+  Example:
+    Account: ₹10,00,000
+    Risk amount (2%): ₹20,000
+    Entry price: ₹2,400 (e.g., Reliance)
+    Stop price: ₹2,376 (1% below entry, ATR-based)
 
-  Therefore: apply max position cap:
-  max_position_value = max_weight * account_equity
-                     = 40% * $100,000 = $40,000
-  
-  Final position_size = min(1,333, $40,000 / $150) = min(1,333, 266) = 266 shares
-  Actual risk on this trade: 266 * $1.50 = $399 (0.4%, well under 2%)
+    position_size = ₹20,000 / ₹24 = 833 shares
+
+    Resulting position value: 833 × ₹2,400 = ₹19,99,200
+    This is ~200% of account — EXCEEDS max position limit.
+
+    Therefore: apply max position cap:
+    max_position_value = max_weight × account_equity
+                       = 40% × ₹10,00,000 = ₹4,00,000
+
+    Final position_size = min(833, ₹4,00,000 / ₹2,400) = min(833, 166) = 166 shares
+    Actual risk on this trade: 166 × ₹24 = ₹3,984 (0.4%, under 2%)
 
 Key insight: The 2% rule sets the MAXIMUM risk.
 Position sizing takes the MINIMUM of:
   a) Size implied by 2% risk rule
   b) Size implied by max strategy weight cap
+```
+
+### 4.4 Position Size Calculation — NSE F&O and MCX (Lot-Based)
+
+F&O and MCX trade in fixed lot sizes. Position size MUST be a whole number
+of lots. Always round DOWN — never round up (rounding up adds unexpected risk).
+
+```
+Common lot sizes (verify from instruments master — these change):
+  Nifty 50 futures:    75 units per lot
+  BankNifty futures:   15 units per lot
+  Gold (MCX full):    100 grams per lot
+  Crude Oil (MCX):    100 barrels per lot
+
+Lot-based sizing:
+  risk_per_lot = (entry_price - stop_price) × lot_size
+  raw_lots     = floor(risk_amount / risk_per_lot)
+  final_lots   = min(raw_lots, cap_lots)
+
+  Where:
+    cap_lots = floor((max_weight × account_equity) / (entry_price × lot_size))
+
+  Example (Nifty futures):
+    Account: ₹10,00,000
+    Risk amount (2%): ₹20,000
+    Entry: ₹24,500, Stop: ₹24,220 (ATR-based, 280pts)
+    Lot size: 75 units
+    risk_per_lot = 280 × 75 = ₹21,000
+
+    raw_lots = floor(₹20,000 / ₹21,000) = floor(0.95) = 0 lots
+
+    Result: TRADE REJECTED — risk per lot exceeds 2% budget.
+    This is correct behaviour. Widen the stop or reduce risk %.
+
+  If entry: ₹24,500, Stop: ₹24,380 (120pts):
+    risk_per_lot = 120 × 75 = ₹9,000
+    raw_lots = floor(₹20,000 / ₹9,000) = floor(2.22) = 2 lots
+    cap_lots = floor((40% × ₹10,00,000) / (₹24,500 × 75))
+             = floor(₹4,00,000 / ₹18,37,500) = 0 lots → WEIGHT CAP HIT
+
+    In practice: increase account size or reduce max_weight cap for F&O
+    or accept that large F&O contracts need larger capital base.
+
+Hard rule: NEVER trade a fractional lot. If final_lots = 0, do not trade.
 ```
 
 -----
@@ -182,24 +233,42 @@ Position sizing takes the MINIMUM of:
 Runs before any Allocator logic. If market was not open, nothing proceeds.
 
 ```
-Library: pandas_market_calendars (NYSE calendar for equities)
+Source: instruments_india table (refreshed at 08:30 IST by Data Manager)
+        NSE holiday calendar + MCX holiday calendar maintained separately.
+        Do NOT use any third-party calendar library — India-specific holidays
+        (Diwali, Holi, Muhurat trading sessions) are not in generic libraries.
 
-Daily check at 6:30 PM ET:
-  1. Was today a trading day?
+Daily check at 18:30 IST:
+
+  1. Was today an NSE trading day?
+     → Query: SELECT is_trading_day FROM market_calendar WHERE date = today
      → If holiday: skip entirely, log MARKET_HOLIDAY, extend Redis TTL
      → If normal day: proceed
 
-  2. Was today an early close?
-     → If yes: use 1:30 PM data cutoff for OHLCV
-     → Flag: EARLY_CLOSE in allocation_runs
+  2. Was today a Muhurat trading session?
+     (Special 1-hour Diwali session, treated as a short trading day)
+     → Flag: MUHURAT_SESSION in allocation_runs
+     → Use 18:30 IST data cutoff (Muhurat closes ~18:15)
+     → Regime classification proceeds normally
 
-  3. Did any circuit breaker / market halt occur today?
-     → Check via Data Manager flag: market_halt_today
-     → If yes: use previous day's weights, log MARKET_HALT
-     → Do NOT attempt regime classification on halted market data
+  3. Did any NSE circuit breaker / market-wide halt occur today?
+     → Check Data Manager flag: market_halt_today (Redis key: state:market:halt)
+     → Level 1 halt (10% Nifty drop): trading resumes after 45 min
+     → Level 2 halt (15%): resumes after 1h 45min
+     → Level 3 halt (20%): market closed for day
+     → If Level 3: use previous day's weights, log MARKET_HALT_L3
+     → If Level 1 or 2 (market resumed): proceed normally, flag MARKET_HALT_PARTIAL
 
-  4. Is tomorrow a trading day?
-     → If no: extend Redis TTL to cover the holiday gap (up to 4 days)
+  4. MCX status (for commodity strategies):
+     → MCX has independent holiday calendar
+     → MCX evening session runs until 23:30 IST (23:00 on pre-holiday days)
+     → Allocator runs at 18:30 IST regardless — MCX strategies still get weights
+     → MCX holiday: commodity strategies receive min_weight for that session
+
+  5. Is tomorrow a trading day?
+     → If no: extend Redis TTL to cover the gap
+     → Max extension: 4 days (covers long weekends + back-to-back holidays)
+     → Diwali week may require 5-day TTL — check calendar at run time
 ```
 
 -----
@@ -311,15 +380,33 @@ Conditions and scoring:
 
 #### Regime 4: High Volatility
 
+India VIX is published by NSE and is the institutional standard for Indian
+market volatility. Use it as the PRIMARY signal. Realized vol as secondary.
+
 ```
-  realized_vol_30d = std(daily_returns[-30:]) * sqrt(252)
-  baseline_vol_90d = std(daily_returns[-90:]) * sqrt(252)
+  india_vix = latest India VIX value (stored in TimescaleDB, ticks.nse_eq)
+  realized_vol_30d = std(daily_returns[-30:]) * sqrt(252)   ← NIFTY-I
+  baseline_vol_90d = std(daily_returns[-90:]) * sqrt(252)   ← NIFTY-I
   vol_ratio = realized_vol_30d / baseline_vol_90d
 
-  vol_ratio > 2.0:    1.00   (crash/extreme event)
-  vol_ratio 1.5–2.0:  0.75
-  vol_ratio 1.2–1.5:  0.40
-  vol_ratio < 1.2:    0.00
+  India VIX thresholds (primary signal — per INDIA_MARKETS_SPEC.md):
+    VIX > 30:        extreme → vix_score = 1.00
+    VIX 20–30:       high    → vix_score = 0.75
+    VIX 15–20:       normal  → vix_score = 0.30
+    VIX < 15:        low     → vix_score = 0.00
+
+  Realized vol ratio (secondary signal):
+    vol_ratio > 2.0: 1.00
+    vol_ratio 1.5–2.0: 0.75
+    vol_ratio 1.2–1.5: 0.40
+    vol_ratio < 1.2:   0.00
+
+  Combined high_vol_score (VIX primary, ratio secondary):
+    high_vol_score = 0.65 * vix_score + 0.35 * vol_ratio_score
+
+  Rationale: India VIX leads realized vol — it reflects options market
+  fear directly. Realized vol lags by days. Using VIX as primary means
+  the regime classifier reacts before the damage shows in price history.
 ```
 
 -----
@@ -327,10 +414,22 @@ Conditions and scoring:
 #### Regime 5: Low Volatility
 
 ```
-  vol_ratio < 0.60:   1.00   (compressed, calm market)
-  vol_ratio 0.60–0.80: 0.65
-  vol_ratio 0.80–0.90: 0.30
-  vol_ratio > 0.90:   0.00
+  India VIX thresholds (primary):
+    VIX < 12:        very low → vix_low_score = 1.00
+    VIX 12–15:       low     → vix_low_score = 0.65
+    VIX 15–17:       borderline → vix_low_score = 0.30
+    VIX > 17:        normal+ → vix_low_score = 0.00
+
+  Realized vol ratio (secondary):
+    vol_ratio < 0.60:    1.00
+    vol_ratio 0.60–0.80: 0.65
+    vol_ratio 0.80–0.90: 0.30
+    vol_ratio > 0.90:    0.00
+
+  low_vol_score = 0.65 * vix_low_score + 0.35 * vol_ratio_low_score
+
+  Note: High Vol and Low Vol scores are mutually exclusive by VIX value.
+  VIX cannot simultaneously be above 20 and below 15.
 ```
 
 -----
@@ -368,12 +467,13 @@ Implementation:
   "high_vol":   0.40,
   "low_vol":    0.00,
   "adx":        22.4,
+  "india_vix":  17.8,
   "vol_ratio":  1.38,
-  "sma50":      512.3,
-  "sma200":     498.1,
-  "price":      521.0,
+  "sma50":      24180.5,
+  "sma200":     23540.0,
+  "price":      24350.0,
   "regime_duration": {"bull": 5, "sideways": 0, "high_vol": 2},
-  "flags":      ["REGIME_LOW_CONFIDENCE"],
+  "flags":      [],
   "warm_up_state": "FULL"
 }
 ```
@@ -420,14 +520,20 @@ Status flags:
 
 ### 7.2 Settlement Lag Handling (Gap 6 Fix)
 
-Equity trades settle T+2. Using unsettled P&L in Sharpe calculations
-overstates or understates performance.
+NSE Equity trades settle T+1 (India moved to T+1 settlement in 2023).
+NSE F&O and MCX settle on expiry or on close — no multi-day lag.
+Using unsettled P&L in Sharpe calculations distorts performance metrics.
 
 ```
+Settlement rules by segment:
+  NSE Equity (EQ):   settlement_date = trade_date + 1 NSE business day
+  NSE F&O:           settlement_date = trade_date (same day MTM settlement)
+  MCX:               settlement_date = trade_date (same day MTM settlement)
+
 All P&L records tagged with:
-  trade_date       (when the trade occurred)
-  settlement_date  (trade_date + 2 NYSE business days)
-  is_settled       (boolean, updated daily)
+  trade_date       (when the trade occurred, IST)
+  settlement_date  (per segment rules above)
+  is_settled       (boolean, updated daily at 08:30 IST)
 
 Performance snapshots use SETTLED P&L only.
 Unsettled P&L stored in trades table but excluded from:
@@ -435,10 +541,9 @@ Unsettled P&L stored in trades table but excluded from:
   - peak_equity high-water mark updates
   - drawdown calculations
 
-Practical impact:
-  Performance metrics on any given day reflect trades from
-  2+ days ago. This is a small lag but prevents phantom P&L
-  from affecting allocation decisions.
+Practical impact (NSE EQ only):
+  Performance metrics reflect trades from 1 business day ago.
+  F&O and MCX: no lag — MTM P&L is same-day settled.
 
 Grafana note: Show both settled and unsettled P&L in dashboard,
   clearly labelled. Do not combine them into one figure.
@@ -449,20 +554,30 @@ Grafana note: Show both settled and unsettled P&L in dashboard,
 ```
 strategy_type = 'intraday' or 'swing' (set at strategy creation)
 
-Intraday strategies:
-  - Close all positions by end of session
-  - Capital is fully liquid at EOD
-  - Weight validated at OPEN (before first trade of day)
+Intraday strategies (MIS product type at Zerodha):
+  - HARD DEADLINE: all positions closed by 15:15 IST (system-enforced)
+    Zerodha auto-squareoff begins at 15:20–15:25 IST. We act first.
+    If system fails to close by 15:15: Risk Monitor sends emergency close.
+    This is non-negotiable — MIS positions left open past squareoff
+    attract penalties and forced execution at unfavourable prices.
+  - Capital is fully liquid at EOD (no overnight margin requirement)
+  - Weight validated at OPEN (09:15 IST, before first trade of day)
   - Excluded from overnight position-weight calculations
   - Overnight weight calculation: treat as 0% deployed
 
-Swing strategies:
-  - Hold positions overnight
-  - Weight validated at CLOSE (after last trade)
+Swing strategies (NRML product type at Zerodha):
+  - Hold positions overnight with GTT stop orders
+  - Weight validated at CLOSE (15:30 IST, after last trade)
   - Included in overnight position-weight calculations
+  - Margin blocked overnight — capital not available for intraday reuse
 
-Allocation applies to both identically.
-Only the timing of weight enforcement differs.
+Allocation weight applies to both identically.
+Only the timing of weight enforcement and the squareoff deadline differ.
+
+MCX intraday strategies:
+  - MCX MIS squareoff: 23:00 IST (30 min before MCX close)
+  - Treated same as NSE intraday but with different deadline
+  - strategy_type: 'intraday_mcx' to distinguish from NSE intraday
 ```
 
 ### 7.4 Statistical Validity Gate
@@ -832,7 +947,7 @@ Underweight strategy handling:
 
 ### 9.2 When Rebalancing Triggers
 
-Daily check at 6:30 PM ET. Actual rebalancing only if ANY condition met:
+Daily check at 18:30 IST. Actual rebalancing only if ANY condition met:
 
 ```
 Condition A — Weight in Band 3 or 4 (>10% drift):
@@ -1382,12 +1497,13 @@ CREATE TABLE regime_history (
     high_vol       DECIMAL(4,3),
     low_vol        DECIMAL(4,3),
     adx            DECIMAL(6,2),
+    india_vix      DECIMAL(6,2),      ← NEW: India VIX at close
     vol_ratio      DECIMAL(6,3),
-    price          DECIMAL(12,4),
+    price          DECIMAL(12,4),     ← NIFTY-I close
     sma50          DECIMAL(12,4),
     sma200         DECIMAL(12,4),
-    warm_up_state  VARCHAR(30),         ← NEW
-    regime_duration JSONB,              ← NEW: {"bull": 5, "sideways": 0}
+    warm_up_state  VARCHAR(30),
+    regime_duration JSONB,
     flags          TEXT[],
     created_at     TIMESTAMP DEFAULT NOW()
 );
@@ -1574,7 +1690,7 @@ This prevents the rebalance itself from distorting strategy P&L.
 1. Portfolio (actual allocation)
 2. Equal weight (1/n per strategy, daily rebalanced)
 3. Nifty 50 buy-and-hold (benchmark)
-4. Risk-free rate (3-month T-bill, approximated from FRED)
+4. Risk-free rate (India 91-day T-bill, RBI reference rate)
 
 Metrics vs benchmark:
   Alpha = annualized portfolio return - annualized Nifty 50 return
@@ -1645,12 +1761,12 @@ Output:
     "rebalance_events": [...],
     "portfolio_returns": [...],
     "vs_equal_weight": {...},
-    "vs_spy": {...},
+    "vs_nifty50": {...},
     "sharpe_ratio": 1.45,
     "max_drawdown": -0.082,
     "total_return": 0.34,
     "rebalance_count": 12,
-    "estimated_total_cost": 540.00
+    "estimated_total_cost_inr": 40500.00
   }
 
 Use case: validate a new config or fit matrix before applying live.
@@ -1772,13 +1888,14 @@ For each incoming BUY signal:
 ## 21. Deployment Notes
 
 ```
-Language:   Python (consistent with backtest/validation services)
-Framework:  FastAPI
+Language:   Go (consistent with full system stack — see ARCHITECTURE.md)
 Runtime:    Cloud Run (pay-per-invocation, ideal for daily schedule)
-Schedule:   Cloud Scheduler → 6:30 PM ET, Monday–Friday
-Redis:      Existing Memorystore instance (shared with Risk Monitor)
-Database:   Existing PostgreSQL instance (new tables only, ~8 new tables)
-Cost:       < $1/month additional (one 10-second run per day)
+Schedule:   Cloud Scheduler → 18:30 IST, Monday–Friday (NSE trading days)
+            Cloud Scheduler timezone: Asia/Kolkata
+            Skip condition: handled in-process via market_calendar check
+Redis:      Existing Memorystore instance (shared with Core + Risk Monitor)
+Database:   Existing PostgreSQL/TimescaleDB instance (new tables only)
+Cost:       < ₹100/month additional (one ~10-second Cloud Run invocation/day)
 ```
 
 -----
@@ -1817,13 +1934,13 @@ Cost:       < $1/month additional (one 10-second run per day)
 |3 |Division by zero            |Hard floors: vol floor 0.001, regime sum floor 0.1, single-strategy path             |
 |4 |Config constraint validation|Pre-flight 7-rule validation, rejects with specific error message                    |
 |5 |Redis integrity             |SHA256 checksum on write, verified on read, fallback to previous on failure          |
-|6 |Settlement lag              |T+2 tagging, performance metrics use settled P&L only                                |
-|7 |Market calendar             |pandas_market_calendars, holiday/halt/early-close handling                           |
+|6 |Settlement lag              |T+1 tagging (NSE EQ); F&O/MCX same-day MTM — no lag                                  |
+|7 |Market calendar             |NSE/MCX calendar from instruments_india table, no third-party library                |
 |8 |Regime warm-up              |4-state system: INSUFFICIENT/LOW_CONFIDENCE/PARTIAL/FULL                             |
 |9 |Multiple runs same day      |is_primary flag, force confirmation required to override                             |
 |10|Regime persistence          |3-day filter normal regimes, 1-day for HighVol                                       |
 |11|Smoothing convergence       |Documented 3-day convergence, regime-dependent smooth_factor                         |
-|12|Reference symbol            |NIFTY-I configurable, expandable to GOLD-I for commodity phase                                    |
+|12|Reference symbol            |NIFTY-I configurable, expandable to GOLD-I for commodity phase                       |
 |13|Config audit trail          |allocator_config_history, immutable, changed_by + reason required                    |
 |14|Manual weight override      |strategy_weight_overrides table, 7-day max expiry                                    |
 |15|Dry run mode                |?dry_run=true on run endpoint, no side effects                                       |
@@ -1834,7 +1951,7 @@ Cost:       < $1/month additional (one 10-second run per day)
 |20|Capital flow protocol       |5 explicit rules, freed capital → cash first → most underweight                      |
 |21|Kill switch                 |4-level portfolio kill switch + strategy-level, stop loss enforcement chain          |
 |22|Transaction costs           |Cost-benefit check, rebalance only if benefit > 2x cost                              |
-|23|Benchmark tracking          |Nifty 50 + equal-weight + risk-free tracked, alpha/beta/IR calculated                     |
+|23|Benchmark tracking          |Nifty 50 + equal-weight + risk-free tracked, alpha/beta/IR calculated                |
 |24|Strategy retirement         |Criteria-based flagging, 14-day observation, human approval to retire                |
 |25|Volatility floor            |Hard floor: vol_20d = max(vol_20d, 0.001) before inverse calculation                 |
 
